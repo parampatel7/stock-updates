@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StockWatch — NSE/BSE Watchlist Dashboard</title>
+    <meta name="description"
+        content="Local NSE/BSE stock watchlist dashboard with live prices, indicators, news, and corporate filings." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="css/style.css" />
+</head>
+
+<body>
+
+    <!-- Toast Container -->
+    <div id="toast-container" aria-live="polite"></div>
+
+    <!-- ══ NAVBAR ═══════════════════════════════════════════════════════════════ -->
+    <nav class="navbar" id="navbar">
+        <div class="navbar__left">
+            <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle Sidebar">
+                <span class="burger-icon"><span></span><span></span><span></span></span>
+            </button>
+            <div class="navbar__brand">
+                <svg class="brand-logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 17L8 12L12 16L16 10L21 7" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round" />
+                    <circle cx="21" cy="7" r="1.5" fill="currentColor" />
+                </svg>
+                <span class="brand-name">StockWatch</span>
+                <span class="brand-badge">NSE/BSE</span>
+            </div>
+        </div>
+        <div class="navbar__center" id="market-status">
+            <span class="market-dot" id="market-dot"></span>
+            <span class="market-label" id="market-label">Checking market…</span>
+        </div>
+        <div class="navbar__right">
+            <button class="btn-icon" id="refresh-all-btn" title="Fetch Latest Updates"
+                aria-label="Fetch Latest Updates">
+                <svg id="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M23 4v6h-6" />
+                    <path d="M1 20v-6h6" />
+                    <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+                </svg>
+            </button>
+            <button class="btn-icon theme-toggle" id="theme-toggle" title="Toggle Theme" aria-label="Toggle Theme">
+                <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+                </svg>
+                <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="5" />
+                    <path
+                        d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                </svg>
+            </button>
+        </div>
+    </nav>
+
+    <!-- ══ LAYOUT ════════════════════════════════════════════════════════════════ -->
+    <div class="layout" id="layout">
+
+        <!-- ── SIDEBAR ─────────────────────────────────────────────────────────── -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar__inner">
+
+                <!-- Search + Autocomplete -->
+                <div class="sidebar__section">
+                    <h3 class="sidebar__heading">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8" />
+                            <path d="M21 21l-4.35-4.35" />
+                        </svg>
+                        Add Stock
+                    </h3>
+                    <form class="add-stock-form" id="add-stock-form" autocomplete="off">
+                        <!-- Autocomplete wrapper -->
+                        <div class="autocomplete-wrapper" id="autocomplete-wrapper">
+                            <input type="text" id="stock-input" class="stock-input"
+                                placeholder="Search ticker or company…" aria-label="Stock Ticker"
+                                aria-autocomplete="list" aria-controls="autocomplete-list" maxlength="30"
+                                spellcheck="false" />
+                            <ul class="autocomplete-list" id="autocomplete-list" role="listbox"
+                                aria-label="Symbol suggestions"></ul>
+                        </div>
+                        <button type="submit" class="btn btn--primary btn--full" id="add-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 5v14M5 12h14" />
+                            </svg>
+                            Add to Watchlist
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Fetch Updates -->
+                <div class="sidebar__section">
+                    <button class="btn btn--accent btn--full" id="fetch-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" id="fetch-icon">
+                            <path d="M23 4v6h-6" />
+                            <path d="M1 20v-6h6" />
+                            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+                        </svg>
+                        Fetch Latest Updates
+                    </button>
+                </div>
+
+                <!-- Watchlist -->
+                <div class="sidebar__section sidebar__section--grow">
+                    <h3 class="sidebar__heading">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M9 11l3 3L22 4" />
+                            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+                        </svg>
+                        Watchlist
+                        <span class="badge" id="watchlist-count">0</span>
+                    </h3>
+                    <ul class="watchlist" id="watchlist-items"></ul>
+                </div>
+
+                <!-- Market Headlines -->
+                <div class="sidebar__section">
+                    <h3 class="sidebar__heading">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z" />
+                        </svg>
+                        Market News
+                    </h3>
+                    <div class="market-headlines" id="market-headlines">
+                        <p class="muted-text">Click Fetch to load headlines</p>
+                    </div>
+                </div>
+
+            </div>
+        </aside>
+
+        <!-- ── MAIN DASHBOARD ────────────────────────────────────────────────────── -->
+        <main class="dashboard" id="dashboard">
+
+            <!-- Empty State -->
+            <div class="empty-state" id="empty-state">
+                <div class="empty-state__icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M3 3h18M3 9h18M3 15h12M3 21h8" />
+                        <circle cx="19" cy="19" r="3" />
+                        <path d="M22 22l-1.5-1.5" />
+                    </svg>
+                </div>
+                <h2 class="empty-state__title">Your watchlist is empty</h2>
+                <p class="empty-state__desc">Search for NSE/BSE tickers or pick a quick example below.</p>
+                <div class="empty-state__examples">
+                    <span>Try:</span>
+                    <button class="pill-btn" data-ticker="RELIANCE">RELIANCE</button>
+                    <button class="pill-btn" data-ticker="TCS">TCS</button>
+                    <button class="pill-btn" data-ticker="INFY">INFY</button>
+                    <button class="pill-btn" data-ticker="HDFCBANK">HDFCBANK</button>
+                    <button class="pill-btn" data-ticker="WIPRO">WIPRO</button>
+                </div>
+            </div>
+
+            <!-- Cards Grid -->
+            <div class="cards-grid" id="cards-grid"></div>
+
+        </main>
+    </div><!-- /.layout -->
+
+    <!-- ── MOBILE BOTTOM NAV ─────────────────────────────────────────────────── -->
+    <nav class="bottom-nav" id="bottom-nav">
+        <button class="bottom-nav__btn" id="mobile-watchlist-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+            </svg>
+            <span>Watchlist</span>
+        </button>
+        <button class="bottom-nav__btn bottom-nav__btn--primary" id="mobile-fetch-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M23 4v6h-6" />
+                <path d="M1 20v-6h6" />
+                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+            </svg>
+            <span>Fetch</span>
+        </button>
+        <button class="bottom-nav__btn" id="mobile-theme-btn">
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+            </svg>
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5" />
+                <path
+                    d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+            </svg>
+            <span>Theme</span>
+        </button>
+    </nav>
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <!-- ══ STOCK CARD TEMPLATE ════════════════════════════════════════════════ -->
+    <template id="card-template">
+        <article class="stock-card" data-symbol="">
+            <!-- Header -->
+            <div class="card__header">
+                <div class="card__title-group">
+                    <h2 class="card__symbol"></h2>
+                    <span class="card__company"></span>
+                </div>
+                <div class="card__actions">
+                    <button class="btn-icon btn-icon--small card__refresh-btn" title="Refresh" aria-label="Refresh">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M23 4v6h-6" />
+                            <path d="M1 20v-6h6" />
+                            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-icon--small btn-icon--danger card__remove-btn" title="Remove"
+                        aria-label="Remove">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 6L6 18M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Price -->
+            <div class="card__price-section">
+                <div class="card__price-main">
+                    <span class="card__price">—</span>
+                    <span class="card__change badge-change">—</span>
+                </div>
+                <div class="card__price-grid">
+                    <div class="price-item"><span class="price-item__label">Open</span><span
+                            class="price-item__value card__open">—</span></div>
+                    <div class="price-item"><span class="price-item__label">Prev Close</span><span
+                            class="price-item__value card__close">—</span></div>
+                    <div class="price-item"><span class="price-item__label">Day High</span><span
+                            class="price-item__value card__high high">—</span></div>
+                    <div class="price-item"><span class="price-item__label">Day Low</span><span
+                            class="price-item__value card__low low">—</span></div>
+                    <div class="price-item"><span class="price-item__label">52W High</span><span
+                            class="price-item__value card__52h">—</span></div>
+                    <div class="price-item"><span class="price-item__label">52W Low</span><span
+                            class="price-item__value card__52l">—</span></div>
+                </div>
+            </div>
+
+            <!-- ── INDICATORS SECTION ─────────────────────────────────────────── -->
+            <div class="card__indicators-section card__indicators-section--hidden">
+                <button class="news-toggle" aria-expanded="true">
+                    <span class="section-heading">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                        </svg>
+                        Technical Indicators
+                    </span>
+                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </button>
+                <div class="indicators-body">
+                    <!-- Signals row -->
+                    <div class="indicator-signals card__ind-signals"></div>
+                    <!-- Indicator grid -->
+                    <div class="indicator-grid">
+                        <!-- RSI -->
+                        <div class="ind-block">
+                            <div class="ind-block__label">RSI (14)</div>
+                            <div class="ind-block__value card__rsi">—</div>
+                            <div class="rsi-bar-wrap">
+                                <div class="rsi-bar card__rsi-bar"></div>
+                            </div>
+                        </div>
+                        <!-- MACD -->
+                        <div class="ind-block">
+                            <div class="ind-block__label">MACD</div>
+                            <div class="ind-block__value card__macd">—</div>
+                            <div class="ind-block__sub card__macd-signal">Signal: —</div>
+                        </div>
+                        <!-- Moving Averages -->
+                        <div class="ind-block ind-block--wide">
+                            <div class="ind-block__label">Moving Averages vs Price</div>
+                            <div class="ma-table card__ma-table"></div>
+                        </div>
+                        <!-- Bollinger Bands -->
+                        <div class="ind-block">
+                            <div class="ind-block__label">Bollinger Bands (20)</div>
+                            <div class="bb-display card__bb-display">
+                                <span class="bb-label">Upper</span><span class="card__bb-upper">—</span>
+                                <span class="bb-label">Mid</span><span class="card__bb-mid">—</span>
+                                <span class="bb-label">Lower</span><span class="card__bb-lower">—</span>
+                            </div>
+                        </div>
+                        <!-- ATR & Volume -->
+                        <div class="ind-block">
+                            <div class="ind-block__label">ATR (14d)</div>
+                            <div class="ind-block__value card__atr">—</div>
+                            <div class="ind-block__sub card__avgvol">Avg Vol 20d: —</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── SCREENER FUNDAMENTALS ──────────────────────────────────────── -->
+            <div class="card__ratios-section card__ratios-section--hidden">
+                <button class="news-toggle" aria-expanded="true">
+                    <span class="section-heading">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path
+                                d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+                        </svg>
+                        Fundamentals <span class="source-label">Screener.in</span>
+                    </span>
+                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </button>
+                <div class="ratios-body">
+                    <div class="ratios-grid card__ratios-grid"></div>
+                    <div class="pros-cons">
+                        <ul class="pros-list card__pros"></ul>
+                        <ul class="cons-list card__cons"></ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── NEWS SECTION ────────────────────────────────────────────────── -->
+            <div class="card__news-section">
+                <button class="news-toggle" aria-expanded="true">
+                    <span class="section-heading">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z" />
+                        </svg>
+                        Latest News
+                    </span>
+                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </button>
+                <ul class="news-list card__news-list"></ul>
+            </div>
+
+            <!-- ── NSE CORPORATE EVENTS (TABBED) ──────────────────────────────── -->
+            <div class="card__corporate-section">
+                <button class="news-toggle" aria-expanded="false">
+                    <span class="section-heading">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                            <path d="M14 2v6h6" />
+                        </svg>
+                        NSE Corporate Events <span class="source-label">Live</span>
+                    </span>
+                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </button>
+                <div class="corporate-body" style="display:none;">
+                    <!-- Tabs -->
+                    <div class="corp-tabs" role="tablist">
+                        <button class="corp-tab corp-tab--active" role="tab"
+                            data-tab="announcements">Announcements</button>
+                        <button class="corp-tab" role="tab" data-tab="boardMeetings">Board</button>
+                        <button class="corp-tab" role="tab" data-tab="corporateActions">Actions</button>
+                        <button class="corp-tab" role="tab" data-tab="financialResults">Results</button>
+                        <button class="corp-tab" role="tab" data-tab="insiderTrading">Insider</button>
+                        <button class="corp-tab" role="tab" data-tab="shareholdingPattern">Holding</button>
+                    </div>
+                    <!-- Tab panels -->
+                    <div class="corp-panels card__corp-panels">
+                        <div class="corp-panel corp-panel--active" data-panel="announcements">
+                            <p class="muted-text">Loading…</p>
+                        </div>
+                        <div class="corp-panel" data-panel="boardMeetings">
+                            <p class="muted-text">Loading…</p>
+                        </div>
+                        <div class="corp-panel" data-panel="corporateActions">
+                            <p class="muted-text">Loading…</p>
+                        </div>
+                        <div class="corp-panel" data-panel="financialResults">
+                            <p class="muted-text">Loading…</p>
+                        </div>
+                        <div class="corp-panel" data-panel="insiderTrading">
+                            <p class="muted-text">Loading…</p>
+                        </div>
+                        <div class="corp-panel" data-panel="shareholdingPattern">
+                            <p class="muted-text">Loading…</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="card__footer">
+                <span class="card__timestamp muted-text">Not yet fetched</span>
+                <span class="card__series badge-series"></span>
+            </div>
+
+        </article>
+    </template>
+
+    <!-- ══ SHIMMER CARD TEMPLATE ═══════════════════════════════════════════════ -->
+    <template id="shimmer-template">
+        <div class="stock-card shimmer-card" aria-busy="true" aria-label="Loading…">
+            <div class="shimmer shimmer--h20 shimmer--w60"></div>
+            <div class="shimmer shimmer--h14 shimmer--w40 shimmer--mt8"></div>
+            <div class="shimmer shimmer--h36 shimmer--w50 shimmer--mt16"></div>
+            <div class="shimmer-row shimmer--mt12">
+                <div class="shimmer shimmer--h12 shimmer--w30"></div>
+                <div class="shimmer shimmer--h12 shimmer--w30"></div>
+                <div class="shimmer shimmer--h12 shimmer--w30"></div>
+            </div>
+            <div class="shimmer shimmer--h12 shimmer--w100 shimmer--mt16"></div>
+            <div class="shimmer shimmer--h12 shimmer--w90 shimmer--mt8"></div>
+            <div class="shimmer shimmer--h12 shimmer--w80 shimmer--mt8"></div>
+        </div>
+    </template>
+
+    <script src="js/api.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
+</body>
+
+</html>
