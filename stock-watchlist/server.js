@@ -141,6 +141,7 @@ app.get('/api/stock/:symbol', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 //  ENDPOINT 2: /api/news/:symbol — Aggregated news (APIs + RSS)
 // ─────────────────────────────────────────────────────────────────────────────
+
 // RSS sources for per-symbol news
 const NEWS_RSS_SOURCES = [
   { url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', source: 'Economic Times' },
@@ -159,7 +160,12 @@ async function fetchRSSForSymbol(url, sourceName, sym) {
     return (feed.items || [])
       .filter(i => (i.title || '').toLowerCase().includes(sym))
       .slice(0, 4)
-      .map(i => ({ title: stripHtml(i.title), link: i.link, pubDate: formatDate(i.pubDate || i.isoDate), source: sourceName }));
+      .map(i => ({
+        title: stripHtml(i.title),
+        link: i.link,
+        pubDate: formatDate(i.pubDate || i.isoDate),
+        source: sourceName,
+      }));
   } catch (e) {
     console.warn(`[NEWS] ${sourceName} RSS failed:`, e.message);
     return [];
@@ -179,20 +185,43 @@ app.get('/api/news/:symbol', async (req, res) => {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     try {
       const { data } = await axios.get('https://newsapi.org/v2/everything', {
-        params: { q: `${symbol} NSE stock`, language: 'en', sortBy: 'publishedAt', pageSize: 10, from: sevenDaysAgo, apiKey: process.env.NEWS_API_KEY },
+        params: {
+          q: `${symbol} NSE stock`,
+          language: 'en',
+          sortBy: 'publishedAt',
+          pageSize: 10,
+          from: sevenDaysAgo,
+          apiKey: process.env.NEWS_API_KEY,
+        },
         timeout: 8000,
       });
-      (data.articles || []).forEach(a => articles.push({ title: stripHtml(a.title), link: a.url, pubDate: formatDate(a.publishedAt), source: a.source?.name || 'NewsAPI' }));
+      (data.articles || []).forEach(a => articles.push({
+        title: stripHtml(a.title),
+        link: a.url,
+        pubDate: formatDate(a.publishedAt),
+        source: a.source?.name || 'NewsAPI',
+      }));
     } catch (e) { console.warn('[NEWS] NewsAPI failed:', e.message); }
   }
 
   if (process.env.GNEWS_API_KEY) {
     try {
       const { data } = await axios.get('https://gnews.io/api/v4/search', {
-        params: { q: `${symbol} stock`, lang: 'en', country: 'in', max: 10, token: process.env.GNEWS_API_KEY },
+        params: {
+          q: `${symbol} stock`,
+          lang: 'en',
+          country: 'in',
+          max: 10,
+          token: process.env.GNEWS_API_KEY,
+        },
         timeout: 8000,
       });
-      (data.articles || []).forEach(a => articles.push({ title: stripHtml(a.title), link: a.url, pubDate: formatDate(a.publishedAt), source: a.source?.name || 'GNews' }));
+      (data.articles || []).forEach(a => articles.push({
+        title: stripHtml(a.title),
+        link: a.url,
+        pubDate: formatDate(a.publishedAt),
+        source: a.source?.name || 'GNews',
+      }));
     } catch (e) { console.warn('[NEWS] GNews failed:', e.message); }
   }
 
@@ -202,11 +231,16 @@ app.get('/api/news/:symbol', async (req, res) => {
   );
   rssResults.forEach(r => { if (r.status === 'fulfilled') articles.push(...r.value); });
 
-  // Google News fallback (always runs, doesn't need symbol filter)
+  // Google News fallback
   try {
     const q = encodeURIComponent(`${symbol} NSE stock`);
     const feed = await rssParser.parseURL(`https://news.google.com/rss/search?q=${q}&hl=en-IN&gl=IN&ceid=IN:en`);
-    (feed.items || []).slice(0, 8).forEach(i => articles.push({ title: stripHtml(i.title), link: i.link, pubDate: formatDate(i.pubDate || i.isoDate), source: 'Google News' }));
+    (feed.items || []).slice(0, 8).forEach(i => articles.push({
+      title: stripHtml(i.title),
+      link: i.link,
+      pubDate: formatDate(i.pubDate || i.isoDate),
+      source: 'Google News',
+    }));
   } catch (e) { console.warn('[NEWS] Google News RSS failed:', e.message); }
 
   // Deduplicate by title
@@ -302,69 +336,86 @@ async function fetchBulkBoardMeetings(symbol) {
 
 app.get('/api/corporate/:symbol', async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
-  const cacheKey = `CORP2_${symbol}`;
+  const cacheKey = `CORP3_${symbol}`;
   const cached = corpCache.get(cacheKey);
   if (cached) return res.json(cached);
 
-  // Fetch all symbol-specific bulk feeds in parallel
-  const [announcements, actions, boardMeetings] = await Promise.all([
+  // Fetch announcements + board meetings in parallel
+  const [announcements, boardMeetings] = await Promise.all([
     fetchBulkAnnouncements(symbol),
-    fetchBulkActions(symbol),
     fetchBulkBoardMeetings(symbol),
   ]);
 
   const thirty = 30 * 24 * 60 * 60 * 1000;
-  const cutoff = Date.now() - thirty;
+  const oneYear = 365 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const cutoff30d = now - thirty;
+  const cutoff1yr = now - oneYear;
 
-  // Map announcements — real field names: symbol, desc, sort_date, attchmntFile (full URL), sm_name, seq_id
-  const symAnn = announcements
-    .filter(a => {
-      const d = new Date(a.sort_date || a.an_dt || '');
-      return !isNaN(d.getTime()) && d.getTime() >= cutoff;
-    })
-    .slice(0, 25)
+  // ── Keyword regex filters on desc field ──────────────────────────────────
+  const isResult = d => /financial result|quarterly result|financial statement|annual result|half.?year/i.test(d);
+  const isInsider = d => /insider|\bpit\b|sast|trading plan|continual disclosure|promoter.*(?:buy|sell|acqui)/i.test(d);
+  const isAction = d => /dividend|bonus issue|stock split|sub.?division|buyback|buy.?back|rights issue|open offer/i.test(d);
+  const isBoard = d => /board meeting|board of directors/i.test(d);
+
+  // ── Common mapper ─────────────────────────────────────────────────────────
+  const mapAnn = (a, catOverride) => ({
+    company_name: stripHtml(a.sm_name || a.symbol || symbol),
+    symbol: (a.symbol || symbol).toUpperCase(),
+    date: formatDate(a.sort_date || a.an_dt || ''),
+    _sortMs: new Date(a.sort_date || a.an_dt || 0).getTime(),
+    category: catOverride || mapCategory(a.desc || ''),
+    title: stripHtml(a.desc || 'Announcement'),
+    description: stripHtml(a.attchmntText || '').slice(0, 200) || stripHtml(a.desc || ''),
+    document_link: a.attchmntFile || '',
+    reference_no: String(a.seq_id || ''),
+  });
+
+  // ── Announcements tab: last 30 days, general filings ─────────────────────
+  const annItems = announcements
+    .filter(a => new Date(a.sort_date || a.an_dt || 0).getTime() >= cutoff30d
+      && !isResult(a.desc) && !isInsider(a.desc) && !isAction(a.desc) && !isBoard(a.desc))
+    .slice(0, 30).map(a => mapAnn(a));
+
+  // ── Results tab: last 4 quarters of financial results ────────────────────
+  const resultItems = announcements
+    .filter(a => isResult(a.desc))
+    .slice(0, 8)
+    .map(a => mapAnn(a, 'Financial Results'));
+
+  // ── Actions tab: last 1 year corporate actions ────────────────────────────
+  const actionItems = announcements
+    .filter(a => isAction(a.desc)
+      && new Date(a.sort_date || a.an_dt || 0).getTime() >= cutoff1yr)
+    .slice(0, 20)
+    .map(a => mapAnn(a, mapCategory(a.desc)));
+
+  // ── Insider PIT tab: last 1 year, full set (frontend paginates 10/page) ───
+  const insiderItems = announcements
+    .filter(a => isInsider(a.desc)
+      && new Date(a.sort_date || a.an_dt || 0).getTime() >= cutoff1yr)
     .map(a => ({
-      company_name: stripHtml(a.sm_name || a.symbol || symbol),
-      symbol: (a.symbol || symbol).toUpperCase(),
-      date: formatDate(a.sort_date || a.an_dt || ''),
-      category: mapCategory(a.desc || ''),
-      title: stripHtml(a.desc || 'Announcement'),
-      description: stripHtml(a.attchmntText || a.desc || ''),
-      document_link: a.attchmntFile || '',  // already a full URL from NSE archives
-      reference_no: String(a.seq_id || a.seqno || ''),
-    }));
+      ...mapAnn(a, 'Insider Trading (PIT)'),
+      trader: stripHtml(a.desc || '').slice(0, 120),
+      quantity: null,
+      price: null,
+      trade_type: /sell|disposal/i.test(a.desc) ? 'Sell' : /buy|acqui/i.test(a.desc) ? 'Buy' : 'Disclosure',
+    }))
+    .sort((a, b) => (b._sortMs || 0) - (a._sortMs || 0));
 
-  // Map corporate actions
-  const symActions = actions
-    .filter(a => {
-      const d = new Date(a.exDt || a.ex_date || a.exDate || a.sort_date || '');
-      return !isNaN(d.getTime()) && d.getTime() >= (cutoff - thirty);
-    })
-    .slice(0, 10)
-    .map(a => ({
-      company_name: stripHtml(a.comp || a.sm_name || a.symbol || symbol),
-      symbol: (a.symbol || symbol).toUpperCase(),
-      date: formatDate(a.exDt || a.ex_date || ''),
-      category: mapCategory(a.subject || a.purpose || ''),
-      title: stripHtml(a.subject || a.purpose || 'Corporate Action'),
-      description: `Ex-Date: ${formatDate(a.exDt || '')}${a.recDt ? ' · Record: ' + formatDate(a.recDt) : ''}${a.remarks ? ' · ' + stripHtml(a.remarks) : ''}`,
-      document_link: '',
-      reference_no: '',
-    }));
-
-  // Map board meetings — real field names: bm_symbol, bm_date, bm_purpose, bm_desc, sm_name, attachment
-  // bm_date can be future (scheduled) — include ±30 days window
-  const futureWindow = Date.now() + thirty;
+  // ── Board meetings: ±30 days (past + upcoming scheduled) ─────────────────
+  const futureWindow = now + thirty;
   const symBoard = boardMeetings
     .filter(a => {
-      const d = new Date(a.bm_date || '');
-      return !isNaN(d.getTime()) && d.getTime() >= cutoff && d.getTime() <= futureWindow;
+      const d = new Date(a.bm_date || '').getTime();
+      return d >= cutoff30d && d <= futureWindow;
     })
     .slice(0, 10)
     .map(a => ({
       company_name: stripHtml(a.sm_name || a.bm_symbol || symbol),
       symbol: (a.bm_symbol || symbol).toUpperCase(),
       date: formatDate(a.bm_date || ''),
+      _sortMs: new Date(a.bm_date || 0).getTime(),
       category: 'Board Meeting',
       title: stripHtml(a.bm_purpose || 'Board Meeting'),
       description: stripHtml(a.bm_desc || ''),
@@ -372,34 +423,23 @@ app.get('/api/corporate/:symbol', async (req, res) => {
       reference_no: '',
     }));
 
-  // Deduplicate by title+date
-  const seen = new Set();
-  const dedup = (arr) => arr.filter(x => {
-    const k = `${x.date}|${x.title}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  const sortDesc = arr => [...arr].sort((a, b) => (b._sortMs || 0) - (a._sortMs || 0));
 
-  // Merge & sort all by date desc
-  const allItems = dedup([...symAnn, ...symBoard, ...symActions])
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  const actionCategories = ['Dividend', 'Bonus Issue', 'Stock Split', 'Buyback', 'Rights Issue'];
   const result = {
-    announcements: allItems.filter(x => x.category !== 'Board Meeting' && !actionCategories.includes(x.category)),
-    boardMeetings: symBoard,
-    corporateActions: [...symActions, ...allItems.filter(x => actionCategories.includes(x.category))],
-    financialResults: allItems.filter(x => x.category === 'Financial Results'),
-    insiderTrading: allItems.filter(x => x.category === 'Insider Trading (PIT)'),
-    shareholdingPattern: allItems.filter(x => x.category === 'Shareholding Pattern'),
-    shareholdingSummary: [],
-    allFilings: allItems,
+    announcements: sortDesc(annItems),
+    boardMeetings: sortDesc(symBoard),
+    corporateActions: sortDesc(actionItems),
+    financialResults: sortDesc(resultItems),
+    insiderTrading: insiderItems,
+    insiderTotal: insiderItems.length,
+    allFilings: sortDesc([...annItems, ...symBoard, ...actionItems, ...resultItems]),
   };
 
-  // If announcements tab is empty but we have raw announcements, show all of them
-  if (result.announcements.length === 0 && symAnn.length > 0) {
-    result.announcements = symAnn;
+  // Fallback: if announcements empty, show all recent non-categorised filings
+  if (result.announcements.length === 0 && announcements.length > 0) {
+    result.announcements = sortDesc(
+      announcements.slice(0, 20).map(a => mapAnn(a))
+    );
   }
 
   corpCache.set(cacheKey, result);
@@ -445,7 +485,6 @@ function calcMACD(prices) {
   const ema26 = calcEMA(prices, 26);
   if (ema12 == null || ema26 == null) return null;
   const macdLine = ema12 - ema26;
-  // Signal line = EMA(9) of MACD line — approximate using latest 9 MACD values
   const macdSeries = [];
   const k12 = 2 / 13, k26 = 2 / 27;
   let e12 = prices.slice(0, 12).reduce((a, b) => a + b, 0) / 12;
@@ -456,7 +495,11 @@ function calcMACD(prices) {
     macdSeries.push(e12 - e26);
   }
   const signal = macdSeries.length >= 9 ? calcEMA(macdSeries, 9) : null;
-  return { macdLine: macdLine.toFixed(2), signal: signal ? signal.toFixed(2) : null, histogram: signal ? (macdLine - signal).toFixed(2) : null };
+  return {
+    macdLine: macdLine.toFixed(2),
+    signal: signal ? signal.toFixed(2) : null,
+    histogram: signal ? (macdLine - signal).toFixed(2) : null,
+  };
 }
 
 function calcBollingerBands(prices, period = 20) {
@@ -465,13 +508,16 @@ function calcBollingerBands(prices, period = 20) {
   const mid = slice.reduce((a, b) => a + b, 0) / period;
   const variance = slice.reduce((s, p) => s + Math.pow(p - mid, 2), 0) / period;
   const stdDev = Math.sqrt(variance);
-  return { upper: (mid + 2 * stdDev).toFixed(2), middle: mid.toFixed(2), lower: (mid - 2 * stdDev).toFixed(2) };
+  return {
+    upper: (mid + 2 * stdDev).toFixed(2),
+    middle: mid.toFixed(2),
+    lower: (mid - 2 * stdDev).toFixed(2),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ENDPOINT 4: /api/indicators/:symbol — Technical Indicators
 // ─────────────────────────────────────────────────────────────────────────────
-// Fetch OHLCV from Yahoo Finance (primary) or NSE (fallback)
 async function fetchOHLCV(symbol) {
   // ── Primary: Yahoo Finance ───────────────────────────────────────
   try {
@@ -491,7 +537,6 @@ async function fetchOHLCV(symbol) {
     const highs = q.high || [];
     const lows = q.low || [];
     const volumes = q.volume || [];
-    // Filter out nulls
     const rows = timestamps
       .map((ts, i) => ({ ts, close: closes[i], high: highs[i], low: lows[i], vol: volumes[i] }))
       .filter(r => r.close != null && r.high != null && r.low != null);
@@ -567,11 +612,17 @@ app.get('/api/indicators/:symbol', async (req, res) => {
         : { label: 'Death Cross (SMA20 < SMA50)', sentiment: 'bearish' });
     }
     if (sma200 && lastClose) {
-      signals.push({ label: lastClose > sma200 ? 'Price Above SMA200' : 'Price Below SMA200', sentiment: lastClose > sma200 ? 'bullish' : 'bearish' });
+      signals.push({
+        label: lastClose > sma200 ? 'Price Above SMA200' : 'Price Below SMA200',
+        sentiment: lastClose > sma200 ? 'bullish' : 'bearish',
+      });
     }
     if (macd?.signal != null) {
       const mNum = parseFloat(macd.macdLine), sNum = parseFloat(macd.signal);
-      signals.push({ label: mNum > sNum ? 'MACD Bullish Crossover' : 'MACD Bearish Crossover', sentiment: mNum > sNum ? 'bullish' : 'bearish' });
+      signals.push({
+        label: mNum > sNum ? 'MACD Bullish Crossover' : 'MACD Bearish Crossover',
+        sentiment: mNum > sNum ? 'bullish' : 'bearish',
+      });
     }
     if (bb && lastClose) {
       if (lastClose >= parseFloat(bb.upper)) signals.push({ label: 'Near Upper Bollinger Band', sentiment: 'bearish' });
@@ -598,7 +649,6 @@ app.get('/api/indicators/:symbol', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 //  ENDPOINT 5: /api/symbols/search?q= — Stock search autocomplete
 // ─────────────────────────────────────────────────────────────────────────────
-// Cache the full NSE equity master list on first call
 let nseSymbolMaster = null;
 
 async function loadNseSymbolMaster() {
@@ -607,7 +657,6 @@ async function loadNseSymbolMaster() {
   if (cached) { nseSymbolMaster = cached; return nseSymbolMaster; }
 
   try {
-    // NSE equity list endpoint - returns all listed equity symbols
     const { data } = await nseGet('https://www.nseindia.com/api/market-data-pre-open?key=NIFTY500');
     const arr = (data.data || []).map(item => ({
       symbol: (item.metadata?.symbol || '').toUpperCase(),
@@ -625,7 +674,6 @@ async function loadNseSymbolMaster() {
     console.warn('[SYMBOLS] NIFTY500 master load failed, trying all-equities fallback:', e.message);
   }
 
-  // Fallback: try NSE autocomplete directly
   return [];
 }
 
@@ -633,7 +681,6 @@ app.get('/api/symbols/search', async (req, res) => {
   const q = (req.query.q || '').trim().toUpperCase();
   if (q.length < 1) return res.json([]);
 
-  // First try NSE's own live autocomplete
   try {
     const { data } = await nseGet(`https://www.nseindia.com/api/search/autocomplete?q=${encodeURIComponent(q)}`);
     const symbols = (data.symbols || []).slice(0, 12).map(s => ({
@@ -647,7 +694,6 @@ app.get('/api/symbols/search', async (req, res) => {
     console.warn('[SYMBOLS] NSE autocomplete failed:', e.message);
   }
 
-  // Fallback: search master list
   const master = await loadNseSymbolMaster();
   const results = master.filter(s =>
     s.symbol.startsWith(q) || s.companyName.toUpperCase().includes(q)

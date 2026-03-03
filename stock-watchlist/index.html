@@ -385,9 +385,8 @@
                             data-tab="announcements">Announcements</button>
                         <button class="corp-tab" role="tab" data-tab="boardMeetings">Board</button>
                         <button class="corp-tab" role="tab" data-tab="corporateActions">Actions</button>
-                        <button class="corp-tab" role="tab" data-tab="financialResults">Results</button>
-                        <button class="corp-tab" role="tab" data-tab="insiderTrading">Insider</button>
-                        <button class="corp-tab" role="tab" data-tab="shareholdingPattern">Holding</button>
+                        <button class="corp-tab" role="tab" data-tab="financialResults">Financials</button>
+                        <button class="corp-tab" role="tab" data-tab="insiderTrading">Insider PIT</button>
                     </div>
                     <!-- Tab panels -->
                     <div class="corp-panels card__corp-panels">
@@ -405,11 +404,14 @@
                         </div>
                         <div class="corp-panel" data-panel="insiderTrading">
                             <p class="muted-text">Loading…</p>
-                        </div>
-                        <div class="corp-panel" data-panel="shareholdingPattern">
-                            <p class="muted-text">Loading…</p>
+                            <div class="insider-pagination" style="display:none;">
+                                <button class="insider-prev btn-ghost" disabled>&#8592; Prev</button>
+                                <span class="insider-page-info"></span>
+                                <button class="insider-next btn-ghost">Next &#8594;</button>
+                            </div>
                         </div>
                     </div>
+
                 </div>
             </div>
 

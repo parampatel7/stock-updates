@@ -1874,6 +1874,16 @@ svg {
   color: #f43f5e;
 }
 
+.cat-buy {
+  background: rgba(34, 197, 94, 0.14);
+  color: #16a34a;
+}
+
+.cat-sell {
+  background: rgba(239, 68, 68, 0.14);
+  color: #dc2626;
+}
+
 .cat-shareholding {
   background: rgba(20, 184, 166, 0.12);
   color: #2dd4bf;
@@ -1882,6 +1892,50 @@ svg {
 .cat-credit {
   background: rgba(251, 191, 36, 0.12);
   color: #fbbf24;
+}
+
+/* Insider pagination */
+.insider-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.insider-page-info {
+  flex: 1;
+  text-align: center;
+}
+
+.btn-ghost {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.btn-ghost:not(:disabled):hover {
+  background: var(--bg-surface-2);
+}
+
+/* Corp item description line */
+.corp-item__desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  padding: 2px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
 }
 
 /* Shareholding table */
