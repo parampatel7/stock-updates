@@ -44,6 +44,11 @@ function sourceTagClass(source) {
     if (s.includes('google')) return 'tag-gnews';
     if (s.includes('newsapi') || s.includes('reuters') || s.includes('bloomberg')) return 'tag-newsapi';
     if (s.includes('nse') || s.includes('bse')) return 'tag-nse';
+    if (s.includes('business standard')) return 'tag-bs';
+    if (s.includes('financial express')) return 'tag-fe';
+    if (s.includes('zee')) return 'tag-zee';
+    if (s.includes('cnbc')) return 'tag-cnbc';
+    if (s.includes('ndtv')) return 'tag-ndtv';
     return 'tag-other';
 }
 
@@ -342,16 +347,20 @@ function _renderCorporateTab(card, panelKey, items, categoryLabel, catClass) {
     items.forEach(item => {
         const div = document.createElement('div');
         div.className = 'corp-item';
-        const link = item.link
-            ? `<a href="${item.link}" target="_blank" rel="noopener">${item.title}</a>`
+        // Support both old format (item.link) and new bulk API format (item.document_link)
+        const href = item.document_link || item.link || '';
+        const titleHtml = href
+            ? `<a href="${href}" target="_blank" rel="noopener">${item.title}</a>`
             : item.title;
+        // Show filing category, ex-date, description, or fallback details
+        const badgeLabel = item.category || categoryLabel;
         const extra = item.exDate
             ? `Ex-Date: ${item.exDate}` + (item.recordDate ? ` · Record: ${item.recordDate}` : '')
-            : (item.details || '');
+            : (item.description || item.details || '');
         div.innerHTML = `
-      <div class="corp-item__title">${link}</div>
+      <div class="corp-item__title">${titleHtml}</div>
       <div class="corp-item__meta">
-        <span class="corp-type-badge ${catClass}">${categoryLabel}</span>
+        <span class="corp-type-badge ${catClass}">${badgeLabel}</span>
         ${item.date ? `<span class="corp-item__date">${item.date}</span>` : ''}
         ${extra ? `<span class="corp-item__details">${extra}</span>` : ''}
       </div>`;
@@ -469,11 +478,22 @@ function renderMarketHeadlines(data) {
     const container = document.getElementById('market-headlines');
     if (!container) return;
     container.innerHTML = '';
-    const all = [
-        ...(data.et || []).slice(0, 3).map(h => ({ ...h, source: 'ET Markets' })),
-        ...(data.moneycontrol || []).slice(0, 3).map(h => ({ ...h, source: 'Moneycontrol' })),
-        ...(data.mint || []).slice(0, 3).map(h => ({ ...h, source: 'Mint' })),
+
+    // Gather from all sources (3 headlines each max)
+    const sourceMap = [
+        { key: 'et', label: 'ET Markets' },
+        { key: 'moneycontrol', label: 'Moneycontrol' },
+        { key: 'mint', label: 'Mint' },
+        { key: 'businessStd', label: 'Business Standard' },
+        { key: 'financialExp', label: 'Financial Express' },
+        { key: 'zeeBiz', label: 'Zee Business' },
+        { key: 'cnbcTv18', label: 'CNBC TV18' },
+        { key: 'ndtvProfit', label: 'NDTV Profit' },
     ];
+    const all = [];
+    sourceMap.forEach(({ key, label }) => {
+        (data[key] || []).slice(0, 2).forEach(h => all.push({ ...h, source: h.source || label }));
+    });
     if (all.length === 0) {
         container.innerHTML = '<p class="muted-text">No headlines available.</p>';
         return;
@@ -483,7 +503,7 @@ function renderMarketHeadlines(data) {
         div.className = 'headline-item';
         div.innerHTML = `
       <a href="${h.link || '#'}" target="_blank" rel="noopener">${h.title || ''}</a>
-      <div class="headline-item__source">${h.source} · ${h.pubDate || ''}</div>`;
+      <div class="headline-item__source"><span class="news-source-tag ${sourceTagClass(h.source)}">${h.source}</span> · ${h.pubDate || ''}</div>`;
         container.appendChild(div);
     });
 }
