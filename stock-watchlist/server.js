@@ -31,6 +31,11 @@ const corpCache = new NodeCache({ stdTTL: 1800, checkperiod: 180 });
 const indicCache = new NodeCache({ stdTTL: 900, checkperiod: 120 });
 const headlineCache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
 const symbolCache = new NodeCache({ stdTTL: 86400 });  // 24h
+const indicesCache = new NodeCache({ stdTTL: 120, checkperiod: 60 });  // 2 min live
+const dalalNewsCache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
+const intlNewsCache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
+const commodityCache = new NodeCache({ stdTTL: 120, checkperiod: 60 });
+const commodityNewsCache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
 
 const rssParser = new Parser({ timeout: 10000 });
 
@@ -741,7 +746,10 @@ async function fetchRSS(url, sourceName, maxItems = 6) {
   try {
     const feed = await rssParser.parseURL(url);
     return (feed.items || []).slice(0, maxItems).map(i => ({
-      title: stripHtml(i.title), link: i.link, pubDate: formatDate(i.pubDate || i.isoDate), source: sourceName,
+      title: stripHtml(i.title), link: i.link,
+      pubDate: formatDate(i.pubDate || i.isoDate),
+      _rawDate: i.isoDate || i.pubDate || '',
+      source: sourceName,
     }));
   } catch (e) { console.warn(`[HEADLINES] ${sourceName}:`, e.message); return []; }
 }
@@ -774,7 +782,446 @@ app.get('/api/headlines', async (req, res) => {
   res.json(result);
 });
 
-// ─── Serve index.html for all other routes ────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
+//  ENDPOINT 8: /api/upcoming-events/:symbol — Next 30-day events from NSE
+// ────────────────────────────────────────────────────────────────────────────────
+/**
+ * Hits:  GET /api/corporates-corporateActions?index=equities&symbol=X&from_date=DD-MM-YYYY&to_date=DD-MM-YYYY
+ * Maps to readable events with type, exDate, label etc.
+ */
+const eventsCache = new NodeCache({ stdTTL: 3600 }); // 1-hour cache
+
+app.get('/api/upcoming-events/:symbol', async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  const cacheKey = `EVT_${symbol}`;
+  const cached = eventsCache.get(cacheKey);
+  if (cached) return res.json(cached);
+
+  const today = new Date();
+  const fut30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const from = toNseDateStr(today);
+  const to = toNseDateStr(fut30);
+
+  const events = [];
+
+  // 1. Corporate Actions for the next 30 days (dividends, splits, bonus, rights)
+  try {
+    const url = `https://www.nseindia.com/api/corporates-corporateActions?index=equities&symbol=${encodeURIComponent(symbol)}&from_date=${from}&to_date=${to}&csv=false`;
+    const { data } = await nseGet(url);
+    const rows = Array.isArray(data) ? data : (data.data || []);
+    console.log(`[UPCOMING] ${symbol}: ${rows.length} corporate actions found`);
+
+    rows.forEach(row => {
+      // NSE fields: symbol, subject, series, faceVal, exDate, recDate, bcStartDate, bcEndDate
+      const purpose = (row.subject || row.desc || '').toLowerCase();
+      let type = 'Corporate Action';
+      let dotClass = 'event-dot--dividend';
+
+      if (purpose.includes('dividend')) { type = 'Dividend'; dotClass = 'event-dot--dividend'; }
+      else if (purpose.includes('bonus')) { type = 'Bonus Issue'; dotClass = 'event-dot--bonus'; }
+      else if (purpose.includes('split') || purpose.includes('sub-divis')) { type = 'Stock Split'; dotClass = 'event-dot--split'; }
+      else if (purpose.includes('right')) { type = 'Rights Issue'; dotClass = 'event-dot--rights'; }
+
+      // Prefer ex-date, fall back to record date
+      const dateStr = row.exDate || row.recDate || row.bcEndDate || '';
+      if (!dateStr) return;
+
+      events.push({
+        type,
+        dotClass,
+        rawDate: dateStr,
+        date: (() => {
+          // NSE returns DD-Mon-YYYY (e.g. "27-Mar-2026")
+          try { return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); }
+          catch { return dateStr; }
+        })(),
+        label: (row.subject || '').trim(),
+      });
+    });
+  } catch (e) {
+    console.warn(`[UPCOMING] ${symbol}: corporate actions failed:`, e.message);
+  }
+
+  // 2. Board Meetings in the next 30 days
+  try {
+    const url = `https://www.nseindia.com/api/corporate-board-meetings?index=equities&symbol=${encodeURIComponent(symbol)}&from_date=${from}&to_date=${to}`;
+    const { data } = await nseGet(url);
+    const rows = Array.isArray(data) ? data : (data.data || []);
+    console.log(`[UPCOMING] ${symbol}: ${rows.length} board meetings found`);
+
+    rows.forEach(row => {
+      const dateStr = row.bm_date || row.date || '';
+      if (!dateStr) return;
+      events.push({
+        type: 'Board Meeting',
+        dotClass: 'event-dot--meeting',
+        rawDate: dateStr,
+        date: (() => {
+          try { return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); }
+          catch { return dateStr; }
+        })(),
+        label: (row.bm_purpose || row.purpose || 'Board Meeting').trim(),
+      });
+    });
+  } catch (e) {
+    console.warn(`[UPCOMING] ${symbol}: board meetings failed:`, e.message);
+  }
+
+  // Sort by raw date ascending
+  events.sort((a, b) => {
+    const da = new Date(a.rawDate), db = new Date(b.rawDate);
+    return da - db;
+  });
+
+  eventsCache.set(cacheKey, events);
+  res.json(events);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Yahoo Finance quote helper
+// ─────────────────────────────────────────────────────────────────────────────
+async function fetchYahooQuote(yahooSymbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=5d&interval=1d&includePrePost=false`;
+  const { data } = await axios.get(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36',
+      'Accept': 'application/json',
+    },
+    timeout: 12000,
+  });
+  const result = data?.chart?.result?.[0];
+  if (!result) throw new Error(`No data for ${yahooSymbol}`);
+  const meta = result.meta || {};
+  const closes = (result.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+  const prevClose = meta.chartPreviousClose || meta.previousClose || (closes.length >= 2 ? closes[closes.length - 2] : null);
+  const lastPrice = meta.regularMarketPrice || closes[closes.length - 1];
+  const pChange = (prevClose && lastPrice) ? ((lastPrice - prevClose) / prevClose * 100) : null;
+  return {
+    symbol: yahooSymbol,
+    name: meta.longName || meta.shortName || yahooSymbol,
+    currency: meta.currency || 'USD',
+    lastPrice: lastPrice ? parseFloat(lastPrice.toFixed(2)) : null,
+    pChange: pChange ? parseFloat(pChange.toFixed(2)) : null,
+    sparkline: closes.slice(-7),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  NSE Index quote helper (for indices Yahoo Finance blocks)
+// ─────────────────────────────────────────────────────────────────────────────
+async function fetchNseIndex(nseSymbol) {
+  try {
+    const url = `https://www.nseindia.com/api/chart-databyindex?index=${encodeURIComponent(nseSymbol)}`;
+    const { data } = await nseGet(url);
+    if (!data || !data.grapthData || data.grapthData.length === 0) throw new Error('No data');
+
+    // Expected format: [timestamp, price]
+    const closes = data.grapthData.map(pt => pt[1]).filter(v => v != null);
+    if (closes.length === 0) throw new Error('Empty closes');
+
+    const lastPrice = closes[closes.length - 1];
+
+    // We need the previous close to calculate change. Let's fetch the current market status quote if we can,
+    // or just estimate from the first point of the day if it's intraday.
+    let pChange = null;
+    try {
+      const qUrl = `https://www.nseindia.com/api/allIndices`;
+      const qData = await nseGet(qUrl);
+      const idxData = (qData.data.data || []).find(i => i.indexSymbol === nseSymbol || i.index === nseSymbol);
+      if (idxData && idxData.percentChange !== undefined) {
+        pChange = parseFloat(idxData.percentChange);
+      }
+    } catch (e) { }
+
+    return {
+      symbol: nseSymbol,
+      name: nseSymbol, // will be overridden
+      currency: 'INR',
+      lastPrice: parseFloat(lastPrice.toFixed(2)),
+      pChange: pChange !== null ? parseFloat(pChange.toFixed(2)) : null,
+      sparkline: closes.slice(-20), // grab more points for NSE since it's exact intraday
+    };
+  } catch (e) {
+    throw new Error(`NSE Fetch failed for ${nseSymbol}: ${e.message}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ENDPOINT 8: /api/dalal-street/indices — Indian market indices
+// ─────────────────────────────────────────────────────────────────────────────
+const DALAL_INDICES = [
+  { symbol: '^NSEI', name: 'Nifty 50' },
+  { symbol: '^BSESN', name: 'Sensex' },
+  { nseSymbol: 'NIFTY NEXT 50', name: 'Nifty Next 50' },
+  { symbol: '^CRSLDX', name: 'Nifty 500', override: '^CRSLDX' },
+  { symbol: '^CNXIT', name: 'Nifty IT' },
+  { nseSymbol: 'NIFTY SMLCAP 250', name: 'Nifty Smlcap 250' },
+  { symbol: '^CNXSC', name: 'Nifty Smlcap 100', override: '^CNXSC' },
+  { symbol: '^NSMIDCP', name: 'Nifty Midcap 100', override: '^NSMIDCP' },
+  { symbol: '^CNXMETAL', name: 'Nifty Metals' },
+  { symbol: '^CNXAUTO', name: 'Nifty Auto' },
+  { symbol: '^CNXCMDT', name: 'Nifty Commodities' },
+  { symbol: '^NSEBANK', name: 'Nifty Bank' },
+  { nseSymbol: 'NIFTY PSU BANK', name: 'Nifty PSU Bank' },
+  { symbol: '^CNXFMCG', name: 'Nifty FMCG' },
+  { symbol: '^CNXFIN', name: 'FinNifty' },
+  { symbol: '^CNXREALTY', name: 'Nifty Realty' },
+  { symbol: '^CNXPHARMA', name: 'Nifty Pharma' },
+  { symbol: '^CNXENERGY', name: 'Nifty Energy' },
+];
+
+app.get('/api/dalal-street/indices', async (req, res) => {
+  const cached = indicesCache.get('DALAL_INDICES');
+  if (cached) return res.json(cached);
+
+  const results = await Promise.allSettled(DALAL_INDICES.map(idx => {
+    if (idx.nseSymbol) {
+      return fetchNseIndex(idx.nseSymbol);
+    }
+    const sym = idx.override !== undefined ? idx.override : idx.symbol;
+    return fetchYahooQuote(sym);
+  }));
+
+  const data = DALAL_INDICES.map((idx, i) => {
+    if (results[i].status === 'fulfilled') {
+      return { ...results[i].value, name: idx.name };
+    }
+    console.warn(`[DALAL] Failed to fetch index ${idx.name}:`, results[i].reason);
+    return {
+      symbol: idx.nseSymbol || idx.override || idx.symbol,
+      name: idx.name,
+      lastPrice: null,
+      pChange: null,
+      sparkline: []
+    };
+  });
+
+  indicesCache.set('DALAL_INDICES', data);
+  res.json(data);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ENDPOINT 9: /api/dalal-street/news — Indian market news
+// ─────────────────────────────────────────────────────────────────────────────
+const DALAL_NEWS_SOURCES = [
+  { key: 'et', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', name: 'ET Markets' },
+  { key: 'moneycontrol', url: 'https://www.moneycontrol.com/rss/marketsnews.xml', name: 'Moneycontrol' },
+  { key: 'mint', url: 'https://www.livemint.com/rss/markets', name: 'LiveMint Markets' },
+  { key: 'bs', url: 'https://www.business-standard.com/rss/markets-106.rss', name: 'Business Standard' },
+  { key: 'zeebiz', url: 'https://www.zeebiz.com/markets/rss', name: 'Zee Business' },
+  { key: 'cnbc', url: 'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/market.xml', name: 'CNBC TV18' },
+  { key: 'ndtv', url: 'https://feeds.feedburner.com/NdtvProfit-Markets', name: 'NDTV Profit' },
+  { key: 'fe', url: 'https://www.financialexpress.com/market/feed/', name: 'Financial Express' },
+];
+
+app.get('/api/dalal-street/news', async (req, res) => {
+  const page = parseInt(req.query.page || '0');
+  const PAGE = 20;
+  const cKey = `DALAL_NEWS_${page}`;
+  const cached = dalalNewsCache.get(cKey);
+  if (cached) return res.json(cached);
+
+  if (page === 0) {
+    const results = await Promise.allSettled(DALAL_NEWS_SOURCES.map(s => fetchRSS(s.url, s.name, 12)));
+    let all = [];
+    results.forEach(r => { if (r.status === 'fulfilled') all.push(...r.value); });
+    // Sort newest first
+    all.sort((a, b) => new Date(b._rawDate || 0) - new Date(a._rawDate || 0));
+    const seen = new Set();
+    all = all.filter(a => {
+      const k = (a.title || '').toLowerCase().trim().slice(0, 80);
+      if (!k || seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+    dalalNewsCache.set('DALAL_NEWS_ALL', all);
+  }
+
+  const all = dalalNewsCache.get('DALAL_NEWS_ALL') || [];
+  const slice = all.slice(page * PAGE, (page + 1) * PAGE);
+  const result = { news: slice, hasMore: (page + 1) * PAGE < all.length, total: all.length };
+  dalalNewsCache.set(cKey, result);
+  res.json(result);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ENDPOINT 10: /api/international/indices — Global market indices
+// ─────────────────────────────────────────────────────────────────────────────
+const INTL_INDICES = [
+  { symbol: '^IXIC', name: 'Nasdaq', flag: '🇺🇸' },
+  { symbol: '^DJI', name: 'Dow Jones', flag: '🇺🇸' },
+  { symbol: '^GSPC', name: 'S&P 500', flag: '🇺🇸' },
+  { symbol: '^N225', name: 'Nikkei 225', flag: '🇯🇵' },
+  { symbol: '000001.SS', name: 'Shanghai Composite', flag: '🇨🇳' },
+  { symbol: '^AXJO', name: 'ASX 200', flag: '🇦🇺' },
+  { symbol: '^HSI', name: 'Hang Seng', flag: '🇭🇰' },
+  { symbol: '^GSPTSE', name: 'TSX Composite', flag: '🇨🇦' },
+];
+
+app.get('/api/international/indices', async (req, res) => {
+  const cached = indicesCache.get('INTL_INDICES');
+  if (cached) return res.json(cached);
+
+  const results = await Promise.allSettled(INTL_INDICES.map(idx => fetchYahooQuote(idx.symbol)));
+  const data = INTL_INDICES.map((idx, i) => {
+    if (results[i].status === 'fulfilled') {
+      return { ...results[i].value, name: idx.name, flag: idx.flag };
+    }
+    return { symbol: idx.symbol, name: idx.name, flag: idx.flag, lastPrice: null, pChange: null, sparkline: [] };
+  });
+
+  indicesCache.set('INTL_INDICES', data);
+  res.json(data);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ENDPOINT 11: /api/international/news — Global financial + geopolitical news
+// ─────────────────────────────────────────────────────────────────────────────
+const INTL_FINANCIAL_SOURCES = [
+  { url: 'https://feeds.reuters.com/reuters/businessNews', name: 'Reuters Markets' },
+  { url: 'https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines', name: 'MarketWatch' },
+  { url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html', name: 'CNBC Markets' },
+  { url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135', name: 'CNBC Finance' },
+  { url: 'https://www.investing.com/rss/news.rss', name: 'Investing.com' },
+  { url: 'https://finance.yahoo.com/rss/topstories', name: 'Yahoo Finance' },
+];
+
+const INTL_GEOPOLITICAL_SOURCES = [
+  { url: 'https://feeds.reuters.com/Reuters/worldNews', name: 'Reuters World' },
+  { url: 'https://www.aljazeera.com/xml/rss/all.xml', name: 'Al Jazeera' },
+  { url: 'http://feeds.bbci.co.uk/news/world/rss.xml', name: 'BBC World' },
+  { url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml', name: 'NY Times World' },
+  { url: 'https://www.theguardian.com/world/rss', name: 'The Guardian World' },
+];
+
+app.get('/api/international/news', async (req, res) => {
+  const page = parseInt(req.query.page || '0');
+  const type = req.query.type || 'financial'; // financial | geopolitical
+  const PAGE = 15;
+  const cKey = `INTL_NEWS_${type}_${page}`;
+  const cached = intlNewsCache.get(cKey);
+  if (cached) return res.json(cached);
+
+  const sources = type === 'geopolitical' ? INTL_GEOPOLITICAL_SOURCES : INTL_FINANCIAL_SOURCES;
+
+  if (page === 0) {
+    const results = await Promise.allSettled(sources.map(s => fetchRSS(s.url, s.name, 10)));
+    let all = [];
+    results.forEach(r => { if (r.status === 'fulfilled') all.push(...r.value); });
+    all.sort((a, b) => new Date(b._rawDate || 0) - new Date(a._rawDate || 0));
+    const seen = new Set();
+    all = all.filter(a => {
+      const k = (a.title || '').toLowerCase().trim().slice(0, 80);
+      if (!k || seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+    intlNewsCache.set(`INTL_NEWS_${type}_ALL`, all);
+  }
+
+  const all = intlNewsCache.get(`INTL_NEWS_${type}_ALL`) || [];
+  const slice = all.slice(page * PAGE, (page + 1) * PAGE);
+  const result = { news: slice, hasMore: (page + 1) * PAGE < all.length, total: all.length };
+  intlNewsCache.set(cKey, result);
+  res.json(result);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ENDPOINT 12: /api/commodities/prices — MCX + COMEX commodity prices
+// ─────────────────────────────────────────────────────────────────────────────
+const COMMODITIES = [
+  // MCX (Indian Exchange — priced in USD on Yahoo, shown in INR context)
+  { symbol: 'GC=F', name: 'Gold', exchange: 'MCX/COMEX', currency: 'USD', mcx: true },
+  { symbol: 'SI=F', name: 'Silver', exchange: 'MCX/COMEX', currency: 'USD', mcx: true },
+  { symbol: 'HG=F', name: 'Copper', exchange: 'MCX/COMEX', currency: 'USD', mcx: true },
+  { symbol: 'CL=F', name: 'Crude Oil (WTI)', exchange: 'MCX/NYMEX', currency: 'USD', mcx: true },
+  { symbol: 'NG=F', name: 'Natural Gas', exchange: 'MCX/NYMEX', currency: 'USD', mcx: true },
+  { symbol: 'ZN=F', name: 'Zinc', exchange: 'MCX/LME', currency: 'USD', mcx: true },
+  { symbol: 'PB=F', name: 'Lead', exchange: 'MCX/LME', currency: 'USD', mcx: true },
+  { symbol: 'ALI=F', name: 'Aluminium', exchange: 'MCX/LME', currency: 'USD', mcx: true },
+  // US/Global
+  { symbol: 'BZ=F', name: 'Brent Crude', exchange: 'ICE', currency: 'USD', mcx: false },
+  { symbol: 'GC=F', name: 'Gold (COMEX)', exchange: 'COMEX', currency: 'USD', mcx: false },
+  { symbol: 'SI=F', name: 'Silver (COMEX)', exchange: 'COMEX', currency: 'USD', mcx: false },
+];
+
+app.get('/api/commodities/prices', async (req, res) => {
+  const cached = commodityCache.get('COMMODITIES');
+  if (cached) return res.json(cached);
+
+  // Deduplicate by symbol
+  const uniqueSymbols = [...new Set(COMMODITIES.map(c => c.symbol))];
+  const quoteMap = {};
+  const results = await Promise.allSettled(uniqueSymbols.map(s => fetchYahooQuote(s)));
+  uniqueSymbols.forEach((s, i) => {
+    if (results[i].status === 'fulfilled') quoteMap[s] = results[i].value;
+  });
+
+  const data = COMMODITIES.map(c => {
+    const q = quoteMap[c.symbol];
+    return {
+      symbol: c.symbol,
+      name: c.name,
+      exchange: c.exchange,
+      currency: c.currency,
+      mcx: c.mcx,
+      lastPrice: q?.lastPrice || null,
+      pChange: q?.pChange || null,
+      sparkline: q?.sparkline || [],
+    };
+  });
+
+  commodityCache.set('COMMODITIES', data);
+  res.json(data);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ENDPOINT 13: /api/commodities/news — Indian + Global commodities news
+// ─────────────────────────────────────────────────────────────────────────────
+const INDIA_COMMODITY_SOURCES = [
+  { url: 'https://economictimes.indiatimes.com/markets/commodities/rssfeeds/2146842.cms', name: 'ET Commodities' },
+  { url: 'https://www.moneycontrol.com/rss/commodities.xml', name: 'Moneycontrol Commodities' },
+  { url: 'https://www.business-standard.com/rss/markets-106.rss', name: 'Business Standard' },
+  { url: 'https://www.zeebiz.com/commodities/rss', name: 'Zee Business Commodities' },
+];
+
+const GLOBAL_COMMODITY_SOURCES = [
+  { url: 'https://feeds.reuters.com/reuters/companyNews', name: 'Reuters Commodities' },
+  { url: 'https://finance.yahoo.com/rss/topstories', name: 'Yahoo Finance' },
+  { url: 'https://feeds.feedburner.com/oilprice-latest-energy-news', name: 'OilPrice.com' },
+  { url: 'https://www.investing.com/rss/news_285.rss', name: 'Investing.com Metals' },
+];
+
+app.get('/api/commodities/news', async (req, res) => {
+  const page = parseInt(req.query.page || '0');
+  const type = req.query.type || 'india'; // india | global
+  const PAGE = 15;
+  const cKey = `COMMOD_NEWS_${type}_${page}`;
+  const cached = commodityNewsCache.get(cKey);
+  if (cached) return res.json(cached);
+
+  const sources = type === 'global' ? GLOBAL_COMMODITY_SOURCES : INDIA_COMMODITY_SOURCES;
+
+  if (page === 0) {
+    const results = await Promise.allSettled(sources.map(s => fetchRSS(s.url, s.name, 12)));
+    let all = [];
+    results.forEach(r => { if (r.status === 'fulfilled') all.push(...r.value); });
+    all.sort((a, b) => new Date(b._rawDate || 0) - new Date(a._rawDate || 0));
+    const seen = new Set();
+    all = all.filter(a => {
+      const k = (a.title || '').toLowerCase().trim().slice(0, 80);
+      if (!k || seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+    commodityNewsCache.set(`COMMOD_NEWS_${type}_ALL`, all);
+  }
+
+  const all = commodityNewsCache.get(`COMMOD_NEWS_${type}_ALL`) || [];
+  const slice = all.slice(page * PAGE, (page + 1) * PAGE);
+  const result = { news: slice, hasMore: (page + 1) * PAGE < all.length, total: all.length };
+  commodityNewsCache.set(cKey, result);
+  res.json(result);
+});
+
+// ─── Serve index.html for all other routes ───────────────────────────────────────────────────
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 app.listen(PORT, async () => {

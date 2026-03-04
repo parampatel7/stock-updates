@@ -115,7 +115,10 @@ async function fetchAllStocks() {
 /* ─── UI Helpers ───────────────────────────────────────────────────────────── */
 
 function updateEmptyState() {
-    showEmptyState(watchlist.length === 0);
+    const isEmpty = watchlist.length === 0;
+    showEmptyState(isEmpty);
+    const dashControls = document.getElementById('dashboard-controls');
+    if (dashControls) dashControls.style.display = isEmpty ? 'none' : 'flex';
 }
 
 function refreshSidebarWatchlist() {
@@ -140,7 +143,41 @@ function closeMobileSidebar() {
     document.getElementById('sidebar-overlay')?.classList.remove('active');
 }
 
-/* ─── Restore Watchlist ────────────────────────────────────────────────────── */
+/* ─── Restore & Sort Watchlist ─────────────────────────────────────────────── */
+
+function sortWatchlist(criteria) {
+    if (!watchlist || watchlist.length === 0) return;
+
+    watchlist.sort((a, b) => {
+        const pA = priceMap.get(a);
+        const pB = priceMap.get(b);
+
+        if (criteria === 'symbol') return a.localeCompare(b);
+        if (!pA && !pB) return a.localeCompare(b);
+        if (!pA) return 1;
+        if (!pB) return -1;
+
+        if (criteria === 'priceDesc') return pB.lastPrice - pA.lastPrice;
+        if (criteria === 'priceAsc') return pA.lastPrice - pB.lastPrice;
+        if (criteria === 'changeDesc') return pB.pChange - pA.pChange;
+        if (criteria === 'changeAsc') return pA.pChange - pB.pChange;
+
+        return 0;
+    });
+
+    saveWatchlist(watchlist);
+
+    // Reorder DOM elements in cards-grid
+    const grid = document.getElementById('cards-grid');
+    watchlist.forEach(sym => {
+        const card = document.getElementById(`card-${sym}`);
+        const shimmer = document.getElementById(`shimmer-${sym}`);
+        if (card) grid.appendChild(card);
+        else if (shimmer) grid.appendChild(shimmer);
+    });
+
+    refreshSidebarWatchlist();
+}
 
 function initWatchlist() {
     updateEmptyState();
@@ -190,6 +227,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Sidebar
     document.getElementById('sidebar-toggle')?.addEventListener('click', toggleSidebar);
     document.getElementById('sidebar-overlay')?.addEventListener('click', closeMobileSidebar);
+
+    // Sort Dropdown
+    document.getElementById('sort-select')?.addEventListener('change', e => {
+        sortWatchlist(e.target.value);
+    });
 
     // Mobile bottom nav
     document.getElementById('mobile-watchlist-btn')?.addEventListener('click', () => {

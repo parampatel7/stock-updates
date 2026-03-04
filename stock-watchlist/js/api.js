@@ -58,6 +58,11 @@ async function searchSymbols(query) {
     return apiFetch(`${BASE_URL}/api/symbols/search?q=${encodeURIComponent(query.trim())}`, 5000);
 }
 
+/** Upcoming corporate events (dividends, splits, board meetings) — next 30 days */
+async function fetchUpcomingEvents(symbol) {
+    return apiFetch(`${BASE_URL}/api/upcoming-events/${encodeURIComponent(symbol)}`, 12000);
+}
+
 /**
  * Fetch all data for a single symbol in parallel.
  * Returns partial data even if some sources fail.

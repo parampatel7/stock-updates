@@ -1,0 +1,42 @@
+# How to Run the Stock Watchlist Dashboard
+
+Follow these steps to get the website running locally on your machine:
+
+## Prerequisites
+Ensure that you have [Node.js](https://nodejs.org/) installed on your machine.
+
+## Setup Instructions
+
+1. **Open your terminal** and navigate to this folder:
+   ```bash
+   cd "/home/invadl0640/Desktop/My Projects/stock-watchlist"
+   ```
+
+2. **Install dependencies**:
+   Run the following command to install the required Node.js packages:
+   ```bash
+   npm install
+   ```
+
+3. **Configure Environment Variables (Optional)**:
+   This project uses a `.env` file for configuration. It includes optional API keys for fetching news.
+   - You can get a free key for NewsAPI from https://newsapi.org/register and add it to `NEWS_API_KEY=`
+   - Or get a key for GNews from https://gnews.io and add it to `GNEWS_API_KEY=`
+   - The default server port is set to `3000` (`PORT=3000`).
+
+## Running the Development Server
+
+1. **Start the server**:
+   You can start the server normally by running:
+   ```bash
+   npm start
+   ```
+   
+   *Alternatively, if you are developing and want the server to automatically restart when files change, run:*
+   ```bash
+   npm run dev
+   ```
+
+2. **Access the Application**:
+   Once the server is running, open your web browser and go to:
+   **http://localhost:3000**

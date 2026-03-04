@@ -128,9 +128,21 @@ function renderCard(symbol, onRemove, onRefresh) {
     card.querySelector('.card__symbol').textContent = symbol;
     card.querySelector('.card__company').textContent = 'Loading…';
 
-    // Remove / refresh buttons
+    // Remove / refresh / external links buttons
     card.querySelector('.card__remove-btn').addEventListener('click', () => onRemove(symbol));
     card.querySelector('.card__refresh-btn').addEventListener('click', () => onRefresh(symbol));
+
+    // External links button — opens Screener for this symbol
+    card.querySelector('.card__links-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const screenerUrl = `https://www.screener.in/company/${encodeURIComponent(symbol)}/consolidated/`;
+        window.open(screenerUrl, '_blank', 'noopener');
+    });
+
+    // Load upcoming events for the calendar tooltip (async, non-blocking)
+    fetchUpcomingEvents(symbol).then(events => {
+        _renderEventsTooltip(card, events);
+    }).catch(() => { /* silently skip if API unavailable */ });
 
     // News toggle
     _setupToggle(card.querySelector('.card__news-section .news-toggle'),
@@ -189,10 +201,31 @@ function updateCard(symbol, price, news, corporate, indicators, screener) {
     // ── Price ──────────────────────────────────────────────────
     if (price) {
         card.querySelector('.card__company').textContent = price.companyName || symbol;
-        card.querySelector('.card__price').textContent = fmtPrice(price.lastPrice);
+
+        const priceEl = card.querySelector('.card__price');
+        priceEl.textContent = fmtPrice(price.lastPrice);
+
+        const pChangeVal = parseFloat(price.pChange);
+        const isUp = pChangeVal > 0;
+        const isDown = pChangeVal < 0;
+
+        // Trigger glow animation
+        card.classList.remove('price-up', 'price-down');
+        void card.offsetWidth; // Reflow
+        if (isUp) card.classList.add('price-up');
+        else if (isDown) card.classList.add('price-down');
+
+        // Sparkline mock
+        const sparklineEl = card.querySelector('.card__sparkline');
+        if (sparklineEl) {
+            const color = isUp ? '#22c55e' : (isDown ? '#ef4444' : '#64748b');
+            const pts = isUp ? '0,25 15,15 30,20 45,10 60,5' : (isDown ? '0,5 15,15 30,10 45,20 60,25' : '0,15 60,15');
+            sparklineEl.innerHTML = `<svg viewBox="0 0 60 30" width="60" height="30" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="${pts}"/></svg>`;
+        }
 
         const chEl = card.querySelector('.card__change');
-        chEl.textContent = `${fmtPct(price.pChange)} (${fmtPrice(price.change)})`;
+        const arrow = isUp ? '▲ ' : (isDown ? '▼ ' : '');
+        chEl.textContent = `${arrow}${fmtPct(price.pChange)} (${fmtPrice(price.change)})`;
         chEl.className = `card__change badge-change ${signClass(price.pChange)}`;
 
         card.querySelector('.card__open').textContent = fmtPrice(price.open);
@@ -334,6 +367,32 @@ function _buildNewsItem(item) {
     </div>`;
     return li;
 }
+
+/* ─── Events Tooltip Renderer (from /api/upcoming-events) ──────────────────────── */
+function _renderEventsTooltip(card, events) {
+    const listEl = card.querySelector('.card__events-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    if (!events || events.length === 0) {
+        listEl.innerHTML = '<span class="events-empty">No events in next 30 days</span>';
+        return;
+    }
+
+    events.forEach(ev => {
+        const div = document.createElement('div');
+        div.className = 'event-item';
+        div.innerHTML = `
+          <span class="event-item__dot ${ev.dotClass || 'event-dot--dividend'}"></span>
+          <div class="event-item__info">
+            <span class="event-item__type">${ev.type}</span>
+            <span class="event-item__date">${ev.date}${ev.label ? ' · ' + ev.label : ''}</span>
+          </div>`;
+        listEl.appendChild(div);
+    });
+}
+
+
 
 function _renderCorporateTab(card, panelKey, items, categoryLabel, catClass) {
     const panel = card.querySelector(`.corp-panel[data-panel="${panelKey}"]`);
