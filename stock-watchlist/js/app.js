@@ -189,9 +189,34 @@ function initWatchlist() {
     refreshSidebarWatchlist();
 }
 
+/* ─── Preloader ────────────────────────────────────────────────────────────── */
+
+function initPreloader() {
+    const preloader = document.getElementById('preloader');
+    const video = document.getElementById('preloader-video');
+    if (!preloader || !video) return;
+
+    let preloaderHidden = false;
+    const hidePreloader = () => {
+        if (preloaderHidden) return;
+        preloaderHidden = true;
+        preloader.classList.add('preloader--hidden');
+        document.body.classList.remove('preload-active');
+        setTimeout(() => {
+            preloader.remove();
+        }, 500); // Wait for transition
+    };
+
+    video.addEventListener('ended', hidePreloader);
+
+    // Max wait time or fallback
+    setTimeout(hidePreloader, 5000);
+}
+
 /* ─── DOMContentLoaded ─────────────────────────────────────────────────────── */
 
 document.addEventListener('DOMContentLoaded', () => {
+    initPreloader();
     loadTheme();
     updateMarketStatus();
     setInterval(updateMarketStatus, 60000);
