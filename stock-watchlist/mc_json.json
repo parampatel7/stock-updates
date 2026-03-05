@@ -1,0 +1,47 @@
+{
+  "props": {
+    "pageProps": {
+      "deviceTypeProp": "web",
+      "isApp": false,
+      "appSource": "web",
+      "darkMode": false,
+      "topNewsData": []
+    },
+    "__N_SSP": true
+  },
+  "page": "/Commodity/home",
+  "query": {},
+  "buildId": "j9O9U6MIG95vt8qtmr-UH",
+  "assetPrefix": "/mc-react",
+  "isFallback": false,
+  "dynamicIds": [
+    220216,
+    474230,
+    115476,
+    844040,
+    572604,
+    229460,
+    819888,
+    882560,
+    817108,
+    663247,
+    429865,
+    910573,
+    109626,
+    883563,
+    365501,
+    108283,
+    927291,
+    941994,
+    156766,
+    795645,
+    319947,
+    480838,
+    705605,
+    332331
+  ],
+  "gssp": true,
+  "customServer": true,
+  "appGip": true,
+  "scriptLoader": []
+}

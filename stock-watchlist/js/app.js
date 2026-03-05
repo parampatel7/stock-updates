@@ -280,7 +280,7 @@ function updateBackgrounds() {
     }
 
     // Update Modal Backgrounds
-    const overlayColor = isDark ? 'rgba(15, 23, 42, 0.75)' : 'rgba(244, 247, 249, 0.75)'; // Increased image visibility
+    const overlayColor = isDark ? 'rgba(15, 23, 42, 0.45)' : 'rgba(244, 247, 249, 0.75)'; // Increased image visibility
 
     const dalalModalContent = document.querySelector('#modal-dalal-street .modal-window');
     if (dalalModalContent) {
