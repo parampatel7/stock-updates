@@ -213,11 +213,106 @@ function initPreloader() {
     setTimeout(hidePreloader, 5000);
 }
 
+/* ─── Background Slider ────────────────────────────────────────────────────── */
+
+const bgThemeImages = {
+    dark: [
+        'Media/Dark Theme/India.jpg',
+        'Media/Dark Theme/Indian2.jpg',
+        'Media/Dark Theme/Indian3.png',
+        'Media/Dark Theme/Indian4.jpg',
+        'Media/Dark Theme/Indian5.jpg'
+    ],
+    light: [
+        'Media/Light Theme/light.png',
+        'Media/Light Theme/light2.png',
+        'Media/Light Theme/light5.png',
+        'Media/Light Theme/light6.png',
+        'Media/Light Theme/light7.png'
+    ]
+};
+
+const modalBgImages = {
+    dalalStreet: { dark: 'Media/Dark Theme/DalalStreet.png', light: 'Media/Light Theme/Dalal Street.png' },
+    international: { dark: 'Media/Dark Theme/International news.png', light: 'Media/Light Theme/International news.png' },
+    commodities: { dark: 'Media/Dark Theme/commodities.png', light: 'Media/Light Theme/Commodities.png' }
+};
+
+let bgIntervalId = null;
+let currentBgIndex = 0;
+
+function initBackgroundSlider() {
+    updateBackgrounds();
+}
+
+function updateBackgrounds() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const images = isDark ? bgThemeImages.dark : bgThemeImages.light;
+
+    // Reset slider
+    clearInterval(bgIntervalId);
+    currentBgIndex = 0;
+
+    const slide1 = document.getElementById('bg-slide-1');
+    const slide2 = document.getElementById('bg-slide-2');
+    if (!slide1 || !slide2) return;
+
+    slide1.style.backgroundImage = `url('${images[0]}')`;
+    slide1.classList.add('active');
+    slide2.classList.remove('active');
+
+    if (images.length > 1) {
+        bgIntervalId = setInterval(() => {
+            currentBgIndex = (currentBgIndex + 1) % images.length;
+            const nextImage = images[currentBgIndex];
+
+            // Toggle active class to crossfade
+            if (slide1.classList.contains('active')) {
+                slide2.style.backgroundImage = `url('${nextImage}')`;
+                slide2.classList.add('active');
+                slide1.classList.remove('active');
+            } else {
+                slide1.style.backgroundImage = `url('${nextImage}')`;
+                slide1.classList.add('active');
+                slide2.classList.remove('active');
+            }
+        }, 5000);
+    }
+
+    // Update Modal Backgrounds
+    const overlayColor = isDark ? 'rgba(15, 23, 42, 0.75)' : 'rgba(244, 247, 249, 0.75)'; // Increased image visibility
+
+    const dalalModalContent = document.querySelector('#modal-dalal-street .modal-window');
+    if (dalalModalContent) {
+        const bgUrl = isDark ? modalBgImages.dalalStreet.dark : modalBgImages.dalalStreet.light;
+        dalalModalContent.style.backgroundImage = `linear-gradient(${overlayColor}, ${overlayColor}), url('${bgUrl}')`;
+        dalalModalContent.style.backgroundSize = 'cover';
+        dalalModalContent.style.backgroundPosition = 'center';
+    }
+
+    const intlModalContent = document.querySelector('#modal-international .modal-window');
+    if (intlModalContent) {
+        const bgUrl = isDark ? modalBgImages.international.dark : modalBgImages.international.light;
+        intlModalContent.style.backgroundImage = `linear-gradient(${overlayColor}, ${overlayColor}), url('${bgUrl}')`;
+        intlModalContent.style.backgroundSize = 'cover';
+        intlModalContent.style.backgroundPosition = 'center';
+    }
+
+    const commodModalContent = document.querySelector('#modal-commodities .modal-window');
+    if (commodModalContent) {
+        const bgUrl = isDark ? modalBgImages.commodities.dark : modalBgImages.commodities.light;
+        commodModalContent.style.backgroundImage = `linear-gradient(${overlayColor}, ${overlayColor}), url('${bgUrl}')`;
+        commodModalContent.style.backgroundSize = 'cover';
+        commodModalContent.style.backgroundPosition = 'center';
+    }
+}
+
 /* ─── DOMContentLoaded ─────────────────────────────────────────────────────── */
 
 document.addEventListener('DOMContentLoaded', () => {
     initPreloader();
     loadTheme();
+    initBackgroundSlider();
     updateMarketStatus();
     setInterval(updateMarketStatus, 60000);
 
@@ -246,8 +341,14 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('refresh-all-btn')?.addEventListener('click', fetchAllStocks);
 
     // Theme
-    document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
-    document.getElementById('mobile-theme-btn')?.addEventListener('click', toggleTheme);
+    document.getElementById('theme-toggle')?.addEventListener('click', () => {
+        toggleTheme();
+        updateBackgrounds();
+    });
+    document.getElementById('mobile-theme-btn')?.addEventListener('click', () => {
+        toggleTheme();
+        updateBackgrounds();
+    });
 
     // Sidebar
     document.getElementById('sidebar-toggle')?.addEventListener('click', toggleSidebar);

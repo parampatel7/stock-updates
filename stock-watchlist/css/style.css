@@ -21,9 +21,11 @@
 :root {
   /* Dark theme (default) */
   --bg-base: #0f172a;
-  --bg-surface: #1e293b;
-  --bg-surface-2: #263348;
-  --bg-surface-3: #334155;
+  --bg-surface: rgba(30, 41, 59, 0.6);
+  /* Glassmorphic */
+  --bg-surface-rgb: 30, 41, 59;
+  --bg-surface-2: rgba(38, 51, 72, 0.6);
+  --bg-surface-3: rgba(51, 65, 85, 0.8);
   --border: rgba(255, 255, 255, 0.05);
   /* Softer border */
   --border-hover: rgba(255, 255, 255, 0.12);
@@ -73,9 +75,11 @@
 /* Light theme overrides */
 [data-theme="light"] {
   --bg-base: #f4f7f9;
-  --bg-surface: #ffffff;
-  --bg-surface-2: #f8fafc;
-  --bg-surface-3: #e2e8f0;
+  --bg-surface: rgba(255, 255, 255, 0.7);
+  /* Glassmorphic */
+  --bg-surface-rgb: 255, 255, 255;
+  --bg-surface-2: rgba(248, 250, 252, 0.6);
+  --bg-surface-3: rgba(226, 232, 240, 0.8);
   --border: rgba(0, 0, 0, 0.06);
   --border-hover: rgba(0, 0, 0, 0.12);
 
@@ -163,6 +167,58 @@ svg {
   height: 100%;
   object-fit: cover;
 }
+
+/* ─── 2.6 Background Slider ──────────────────────────────────── */
+.bg-slider-container {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -2;
+  /* Behind everything */
+}
+
+.bg-slide {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0;
+  transition: opacity 2s ease-in-out;
+  /* Smooth 2s fade */
+  will-change: opacity;
+}
+
+.bg-slide.active {
+  opacity: 1;
+}
+
+.bg-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-base);
+  /* Base theme color */
+  opacity: 0.85;
+  /* Adjust this to enable enough readability while showing background */
+  z-index: -1;
+  pointer-events: none;
+  transition: background var(--transition);
+}
+
+/* Make layout elements transparent so we see the background */
+.sidebar,
+.dashboard,
+.navbar {
+  background: rgba(var(--bg-surface-rgb, 30, 41, 59), 0.7);
+  /* Fallback */
+}
+
+/* Add RGB variables for transparency support to existing definitions if needed below */
 
 /* ─── 3. Layout ──────────────────────────────────────────────── */
 .navbar {
@@ -2788,7 +2844,12 @@ body.modal-open {
 .modal-news-item {
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  margin-bottom: 6px;
+  /* Spacing between cards to show background */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   transition: all var(--transition);
   cursor: pointer;
 }
