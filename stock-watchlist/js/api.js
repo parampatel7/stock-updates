@@ -63,6 +63,13 @@ async function fetchUpcomingEvents(symbol) {
     return apiFetch(`${BASE_URL}/api/upcoming-events/${encodeURIComponent(symbol)}`, 12000);
 }
 
+/** Bulk upcoming events for watchlist — next 30 days */
+async function fetchBulkUpcomingEvents(symbols) {
+    if (!symbols || symbols.length === 0) return { events: [] };
+    const query = symbols.join(',');
+    return apiFetch(`${BASE_URL}/api/upcoming-events?symbols=${encodeURIComponent(query)}`, 15000);
+}
+
 /**
  * Fetch all data for a single symbol in parallel.
  * Returns partial data even if some sources fail.

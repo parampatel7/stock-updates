@@ -275,21 +275,6 @@
                 <div class="card__title-group">
                     <div class="card__symbol-row">
                         <h2 class="card__symbol"></h2>
-                        <!-- Calendar Icon with Events Tooltip -->
-                        <div class="card__events-trigger" aria-label="Upcoming Events">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                                <line x1="16" y1="2" x2="16" y2="6" />
-                                <line x1="8" y1="2" x2="8" y2="6" />
-                                <line x1="3" y1="10" x2="21" y2="10" />
-                            </svg>
-                            <div class="card__events-popup card__events-content">
-                                <div class="events-popup__header">This Month's Events</div>
-                                <div class="card__events-list"><span class="events-empty">No upcoming events</span>
-                                </div>
-                            </div>
-                        </div>
                     </div>
                     <span class="card__company"></span>
                 </div>
@@ -472,7 +457,6 @@
                         <button class="corp-tab" role="tab" data-tab="boardMeetings">Board</button>
                         <button class="corp-tab" role="tab" data-tab="corporateActions">Actions</button>
                         <button class="corp-tab" role="tab" data-tab="financialResults">Financials</button>
-                        <button class="corp-tab" role="tab" data-tab="insiderTrading">Insider PIT</button>
                     </div>
                     <!-- Tab panels -->
                     <div class="corp-panels card__corp-panels">
@@ -487,14 +471,6 @@
                         </div>
                         <div class="corp-panel" data-panel="financialResults">
                             <p class="muted-text">Loading…</p>
-                        </div>
-                        <div class="corp-panel" data-panel="insiderTrading">
-                            <p class="muted-text">Loading…</p>
-                            <div class="insider-pagination" style="display:none;">
-                                <button class="insider-prev btn-ghost" disabled>&#8592; Prev</button>
-                                <span class="insider-page-info"></span>
-                                <button class="insider-next btn-ghost">Next &#8594;</button>
-                            </div>
                         </div>
                     </div>
 
@@ -732,6 +708,47 @@
                         <div class="news-col__loader" id="commod-col1-loader"></div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ UPCOMING EVENTS DRAWER & BUTTON ═══════════════════════════════════ -->
+    <button class="floating-events-btn" id="floating-events-btn" aria-label="Upcoming Events (1M)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round" class="floating-events-icon">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+        <span class="floating-events-badge" id="floating-events-badge" style="display: none;">0</span>
+        <span class="floating-events-label">Upcoming Events</span>
+    </button>
+
+    <div class="events-drawer-overlay" id="events-drawer-overlay"></div>
+    <div class="events-drawer" id="events-drawer">
+        <div class="events-drawer__header">
+            <h3>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                Upcoming Events (1M)
+            </h3>
+            <button class="btn-icon events-drawer__close" id="events-drawer-close" aria-label="Close Drawer">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <div class="events-drawer__body" id="events-drawer-body">
+            <!-- Content will be injected via JS -->
+            <div class="events-drawer__empty">
+                <p>Click "Fetch Latest Updates" to load events for your watchlist.</p>
             </div>
         </div>
     </div>

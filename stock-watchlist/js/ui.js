@@ -139,10 +139,8 @@ function renderCard(symbol, onRemove, onRefresh) {
         window.open(screenerUrl, '_blank', 'noopener');
     });
 
-    // Load upcoming events for the calendar tooltip (async, non-blocking)
-    fetchUpcomingEvents(symbol).then(events => {
-        _renderEventsTooltip(card, events);
-    }).catch(() => { /* silently skip if API unavailable */ });
+    // Removed calendar tooltip feature
+
 
     // News toggle
     _setupToggle(card.querySelector('.card__news-section .news-toggle'),
@@ -345,7 +343,6 @@ function updateCard(symbol, price, news, corporate, indicators, screener) {
         _renderCorporateTab(card, 'boardMeetings', corporate.boardMeetings, 'Board Meeting', 'cat-board');
         _renderCorporateTab(card, 'corporateActions', corporate.corporateActions, 'Corp Action', 'cat-action');
         _renderCorporateTab(card, 'financialResults', corporate.financialResults, 'Financial Result', 'cat-results');
-        _renderInsiderTabPaginated(card, corporate.insiderTrading || []);
     }
 
     // ── Timestamp ──────────────────────────────────────────────
@@ -366,30 +363,6 @@ function _buildNewsItem(item) {
       <span class="news-item__date">${item.pubDate || ''}</span>
     </div>`;
     return li;
-}
-
-/* ─── Events Tooltip Renderer (from /api/upcoming-events) ──────────────────────── */
-function _renderEventsTooltip(card, events) {
-    const listEl = card.querySelector('.card__events-list');
-    if (!listEl) return;
-    listEl.innerHTML = '';
-
-    if (!events || events.length === 0) {
-        listEl.innerHTML = '<span class="events-empty">No events in next 30 days</span>';
-        return;
-    }
-
-    events.forEach(ev => {
-        const div = document.createElement('div');
-        div.className = 'event-item';
-        div.innerHTML = `
-          <span class="event-item__dot ${ev.dotClass || 'event-dot--dividend'}"></span>
-          <div class="event-item__info">
-            <span class="event-item__type">${ev.type}</span>
-            <span class="event-item__date">${ev.date}${ev.label ? ' · ' + ev.label : ''}</span>
-          </div>`;
-        listEl.appendChild(div);
-    });
 }
 
 
@@ -424,78 +397,6 @@ function _renderCorporateTab(card, panelKey, items, categoryLabel, catClass) {
       </div>`;
         panel.appendChild(div);
     });
-}
-
-// Paginated insider PIT renderer — 10 trades per page
-function _renderInsiderTabPaginated(card, items) {
-    const panel = card.querySelector('.corp-panel[data-panel="insiderTrading"]');
-    if (!panel) return;
-
-    const PAGE_SIZE = 10;
-    let currentPage = 0;
-
-    function render(page) {
-        // Clear existing trade items (keep pagination controls)
-        panel.querySelectorAll('.corp-item, .insider-empty').forEach(el => el.remove());
-
-        if (!items || items.length === 0) {
-            const p = document.createElement('p');
-            p.className = 'muted-text insider-empty';
-            p.style.padding = '8px';
-            p.textContent = 'No insider PIT disclosures found for the last 1 year.';
-            panel.insertBefore(p, panel.querySelector('.insider-pagination'));
-            return;
-        }
-
-        const start = page * PAGE_SIZE;
-        const slice = items.slice(start, start + PAGE_SIZE);
-        const frag = document.createDocumentFragment();
-
-        slice.forEach(item => {
-            const div = document.createElement('div');
-            div.className = 'corp-item';
-            const typeClass = item.trade_type === 'Buy' ? 'cat-buy' : item.trade_type === 'Sell' ? 'cat-sell' : 'cat-insider';
-            const href = item.document_link || '';
-            const titleHtml = href
-                ? `<a href="${href}" target="_blank" rel="noopener">${item.title}</a>`
-                : item.title;
-            const extras = [];
-            if (item.quantity) extras.push(`Qty: ${Number(item.quantity).toLocaleString('en-IN')}`);
-            if (item.price) extras.push(`Price: ₹${item.price}`);
-            if (item.quantity && item.price) extras.push(`Amt: ₹${(item.quantity * item.price).toLocaleString('en-IN')}`);
-            div.innerHTML = `
-            <div class="corp-item__title">${titleHtml}</div>
-            <div class="corp-item__meta">
-              <span class="corp-type-badge ${typeClass}">${item.trade_type || 'Disclosure'}</span>
-              ${item.date ? `<span class="corp-item__date">${item.date}</span>` : ''}
-              ${extras.length ? `<span class="corp-item__details">${extras.join(' · ')}</span>` : ''}
-            </div>
-            ${item.description && item.description !== item.title ? `<div class="corp-item__desc">${item.description.slice(0, 180)}</div>` : ''}`;
-            frag.appendChild(div);
-        });
-
-        const pagi = panel.querySelector('.insider-pagination');
-        panel.insertBefore(frag, pagi);
-
-        // Update pagination controls
-        const totalPages = Math.ceil(items.length / PAGE_SIZE);
-        if (pagi && totalPages > 1) {
-            pagi.style.display = 'flex';
-            const prevBtn = pagi.querySelector('.insider-prev');
-            const nextBtn = pagi.querySelector('.insider-next');
-            const pageInfo = pagi.querySelector('.insider-page-info');
-            prevBtn.disabled = page === 0;
-            nextBtn.disabled = page >= totalPages - 1;
-            pageInfo.textContent = `${start + 1}–${Math.min(start + PAGE_SIZE, items.length)} of ${items.length}`;
-
-            prevBtn.onclick = () => { currentPage--; render(currentPage); };
-            nextBtn.onclick = () => { currentPage++; render(currentPage); };
-        } else if (pagi) {
-            pagi.style.display = 'none';
-        }
-    }
-
-    render(0);
 }
 
 

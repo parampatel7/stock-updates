@@ -48,9 +48,9 @@ async function getNseSession() {
   try {
     const res = await axios.get('https://www.nseindia.com', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept': '*/*;q=0.8',
       },
       timeout: 12000,
     });
@@ -64,17 +64,18 @@ async function getNseSession() {
   return nseSessionCookies;
 }
 
-async function nseGet(url) {
+async function nseGet(url, responseType = 'json') {
   const cookies = await getNseSession();
   return axios.get(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36',
-      'Accept': 'application/json, text/plain, */*',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      'Accept': '*/*',
       'Accept-Language': 'en-US,en;q=0.9',
       'Referer': 'https://www.nseindia.com/',
       'Cookie': cookies,
     },
     timeout: 15000,
+    responseType
   });
 }
 
@@ -395,18 +396,7 @@ app.get('/api/corporate/:symbol', async (req, res) => {
     .slice(0, 20)
     .map(a => mapAnn(a, mapCategory(a.desc)));
 
-  // ── Insider PIT tab: last 1 year, full set (frontend paginates 10/page) ───
-  const insiderItems = announcements
-    .filter(a => isInsider(a.desc)
-      && new Date(a.sort_date || a.an_dt || 0).getTime() >= cutoff1yr)
-    .map(a => ({
-      ...mapAnn(a, 'Insider Trading (PIT)'),
-      trader: stripHtml(a.desc || '').slice(0, 120),
-      quantity: null,
-      price: null,
-      trade_type: /sell|disposal/i.test(a.desc) ? 'Sell' : /buy|acqui/i.test(a.desc) ? 'Buy' : 'Disclosure',
-    }))
-    .sort((a, b) => (b._sortMs || 0) - (a._sortMs || 0));
+
 
   // ── Board meetings: ±30 days (past + upcoming scheduled) ─────────────────
   const futureWindow = now + thirty;
@@ -435,8 +425,6 @@ app.get('/api/corporate/:symbol', async (req, res) => {
     boardMeetings: sortDesc(symBoard),
     corporateActions: sortDesc(actionItems),
     financialResults: sortDesc(resultItems),
-    insiderTrading: insiderItems,
-    insiderTotal: insiderItems.length,
     allFilings: sortDesc([...annItems, ...symBoard, ...actionItems, ...resultItems]),
   };
 
@@ -783,98 +771,135 @@ app.get('/api/headlines', async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────────
-//  ENDPOINT 8: /api/upcoming-events/:symbol — Next 30-day events from NSE
+//  ENDPOINT 8: /api/upcoming-events — Next 30-day events for multiple symbols (Watchlist)
 // ────────────────────────────────────────────────────────────────────────────────
-/**
- * Hits:  GET /api/corporates-corporateActions?index=equities&symbol=X&from_date=DD-MM-YYYY&to_date=DD-MM-YYYY
- * Maps to readable events with type, exDate, label etc.
- */
-const eventsCache = new NodeCache({ stdTTL: 3600 }); // 1-hour cache
+const bulkEventsCache = new NodeCache({ stdTTL: 600 }); // 10-minute cache for bulk
 
-app.get('/api/upcoming-events/:symbol', async (req, res) => {
-  const symbol = req.params.symbol.toUpperCase();
-  const cacheKey = `EVT_${symbol}`;
-  const cached = eventsCache.get(cacheKey);
-  if (cached) return res.json(cached);
+app.get('/api/upcoming-events', async (req, res) => {
+  const symbolsQuery = (req.query.symbols || '').toUpperCase();
+  if (!symbolsQuery) return res.json({ events: [] });
+  const symbols = symbolsQuery.split(',').map(s => s.trim()).filter(s => s);
+  if (symbols.length === 0) return res.json({ events: [] });
+
+  const cacheKey = `BULK_EVT_30D`;
+  let bulkData = bulkEventsCache.get(cacheKey);
 
   const today = new Date();
   const fut30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
   const from = toNseDateStr(today);
   const to = toNseDateStr(fut30);
 
-  const events = [];
+  if (!bulkData) {
+    bulkData = [];
+    try {
+      // 1. Corporate Actions for the next 30 days across all equities
+      const urlAct = `https://www.nseindia.com/api/corporates-corporateActions?index=equities&from_date=${from}&to_date=${to}&csv=false`;
+      const { data: rawResp } = await nseGet(urlAct, 'text'); // Returns CSV text or JSON object depending on UA/headers
 
-  // 1. Corporate Actions for the next 30 days (dividends, splits, bonus, rights)
-  try {
-    const url = `https://www.nseindia.com/api/corporates-corporateActions?index=equities&symbol=${encodeURIComponent(symbol)}&from_date=${from}&to_date=${to}&csv=false`;
-    const { data } = await nseGet(url);
-    const rows = Array.isArray(data) ? data : (data.data || []);
-    console.log(`[UPCOMING] ${symbol}: ${rows.length} corporate actions found`);
+      let actRows = [];
+      let respAct = (typeof rawResp === 'object' && rawResp.data) ? rawResp.data : rawResp;
 
-    rows.forEach(row => {
-      // NSE fields: symbol, subject, series, faceVal, exDate, recDate, bcStartDate, bcEndDate
-      const purpose = (row.subject || row.desc || '').toLowerCase();
-      let type = 'Corporate Action';
-      let dotClass = 'event-dot--dividend';
+      if (typeof respAct === 'string' && (respAct.includes('Symbol,Company Name') || respAct.includes('"SYMBOL","COMPANY NAME"'))) {
+        const lines = respAct.split('\n');
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          const regex = /(".*?"|[^",\s]+)(?=\s*,|\s*$)/g;
+          const cols = [];
+          let match;
+          while ((match = regex.exec(line))) {
+            cols.push(match[1].replace(/^"|"$/g, '').trim());
+          }
+          if (cols.length >= 6) {
+            actRows.push({
+              symbol: cols[0],
+              comp: cols[1],
+              subject: cols[3],
+              exDate: cols[5] !== '-' ? cols[5] : '',
+              recDate: cols[6] && cols[6] !== '-' ? cols[6] : ''
+            });
+          }
+        }
+      } else {
+        try {
+          const parsed = JSON.parse(respAct);
+          actRows = Array.isArray(parsed) ? parsed : (parsed.data || []);
+        } catch (e) { }
+      }
 
-      if (purpose.includes('dividend')) { type = 'Dividend'; dotClass = 'event-dot--dividend'; }
-      else if (purpose.includes('bonus')) { type = 'Bonus Issue'; dotClass = 'event-dot--bonus'; }
-      else if (purpose.includes('split') || purpose.includes('sub-divis')) { type = 'Stock Split'; dotClass = 'event-dot--split'; }
-      else if (purpose.includes('right')) { type = 'Rights Issue'; dotClass = 'event-dot--rights'; }
+      actRows.forEach(row => {
+        const sym = (row.symbol || '').toUpperCase();
+        if (!sym) return;
+        const purpose = (row.subject || row.desc || '').toLowerCase();
+        let type = 'Corporate Action';
+        let dotClass = 'event-dot--dividend';
 
-      // Prefer ex-date, fall back to record date
-      const dateStr = row.exDate || row.recDate || row.bcEndDate || '';
-      if (!dateStr) return;
+        if (purpose.includes('dividend')) { type = 'Dividend'; dotClass = 'event-dot--dividend'; }
+        else if (purpose.includes('bonus')) { type = 'Bonus Issue'; dotClass = 'event-dot--bonus'; }
+        else if (purpose.includes('split') || purpose.includes('sub-divis')) { type = 'Stock Split'; dotClass = 'event-dot--split'; }
+        else if (purpose.includes('right')) { type = 'Rights Issue'; dotClass = 'event-dot--rights'; }
 
-      events.push({
-        type,
-        dotClass,
-        rawDate: dateStr,
-        date: (() => {
-          // NSE returns DD-Mon-YYYY (e.g. "27-Mar-2026")
-          try { return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); }
-          catch { return dateStr; }
-        })(),
-        label: (row.subject || '').trim(),
+        const dateStr = row.exDate || row.recDate || row.bcEndDate || '';
+        if (!dateStr) return;
+
+        bulkData.push({
+          symbol: sym,
+          company: (row.comp || row.sm_name || row.company || sym).trim(),
+          event_type: type,
+          dotClass,
+          rawDate: dateStr,
+          date: (() => {
+            try { return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); }
+            catch { return dateStr; }
+          })(),
+          label: (row.subject || '').trim(),
+        });
       });
-    });
-  } catch (e) {
-    console.warn(`[UPCOMING] ${symbol}: corporate actions failed:`, e.message);
+    } catch (e) {
+      console.warn(`[UPCOMING BULK] corporate actions failed:`, e.message);
+    }
+
+    try {
+      // 2. Board Meetings for the next 30 days
+      const urlBm = `https://www.nseindia.com/api/corporate-board-meetings?index=equities&from_date=${from}&to_date=${to}`;
+      const { data: bmData } = await nseGet(urlBm);
+      const bmRows = Array.isArray(bmData) ? bmData : (bmData.data || []);
+
+      bmRows.forEach(row => {
+        const sym = (row.symbol || row.bm_symbol || '').toUpperCase();
+        if (!sym) return;
+        const dateStr = row.bm_date || row.date || '';
+        if (!dateStr) return;
+
+        bulkData.push({
+          symbol: sym,
+          company: (row.comp || row.sm_name || row.company || sym).trim(),
+          event_type: 'Board Meeting',
+          dotClass: 'event-dot--meeting',
+          rawDate: dateStr,
+          date: (() => {
+            try { return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); }
+            catch { return dateStr; }
+          })(),
+          label: (row.bm_purpose || row.purpose || 'Board Meeting').trim(),
+        });
+      });
+    } catch (e) {
+      console.warn(`[UPCOMING BULK] board meetings failed:`, e.message);
+    }
+
+    bulkEventsCache.set(cacheKey, bulkData);
   }
 
-  // 2. Board Meetings in the next 30 days
-  try {
-    const url = `https://www.nseindia.com/api/corporate-board-meetings?index=equities&symbol=${encodeURIComponent(symbol)}&from_date=${from}&to_date=${to}`;
-    const { data } = await nseGet(url);
-    const rows = Array.isArray(data) ? data : (data.data || []);
-    console.log(`[UPCOMING] ${symbol}: ${rows.length} board meetings found`);
+  // Filter the bulk data by requested symbols
+  const requestedEvents = bulkData.filter(e => symbols.includes(e.symbol));
 
-    rows.forEach(row => {
-      const dateStr = row.bm_date || row.date || '';
-      if (!dateStr) return;
-      events.push({
-        type: 'Board Meeting',
-        dotClass: 'event-dot--meeting',
-        rawDate: dateStr,
-        date: (() => {
-          try { return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); }
-          catch { return dateStr; }
-        })(),
-        label: (row.bm_purpose || row.purpose || 'Board Meeting').trim(),
-      });
-    });
-  } catch (e) {
-    console.warn(`[UPCOMING] ${symbol}: board meetings failed:`, e.message);
-  }
-
-  // Sort by raw date ascending
-  events.sort((a, b) => {
+  requestedEvents.sort((a, b) => {
     const da = new Date(a.rawDate), db = new Date(b.rawDate);
     return da - db;
   });
 
-  eventsCache.set(cacheKey, events);
-  res.json(events);
+  res.json({ events: requestedEvents });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1128,19 +1153,24 @@ app.get('/api/international/news', async (req, res) => {
 //  ENDPOINT 12: /api/commodities/prices — MCX + COMEX commodity prices
 // ─────────────────────────────────────────────────────────────────────────────
 const COMMODITIES = [
-  // MCX (Indian Exchange — priced in USD on Yahoo, shown in INR context)
-  { symbol: 'GC=F', name: 'Gold', exchange: 'MCX/COMEX', currency: 'USD', mcx: true },
-  { symbol: 'SI=F', name: 'Silver', exchange: 'MCX/COMEX', currency: 'USD', mcx: true },
-  { symbol: 'HG=F', name: 'Copper', exchange: 'MCX/COMEX', currency: 'USD', mcx: true },
-  { symbol: 'CL=F', name: 'Crude Oil (WTI)', exchange: 'MCX/NYMEX', currency: 'USD', mcx: true },
-  { symbol: 'NG=F', name: 'Natural Gas', exchange: 'MCX/NYMEX', currency: 'USD', mcx: true },
-  { symbol: 'ZN=F', name: 'Zinc', exchange: 'MCX/LME', currency: 'USD', mcx: true },
-  { symbol: 'PB=F', name: 'Lead', exchange: 'MCX/LME', currency: 'USD', mcx: true },
-  { symbol: 'ALI=F', name: 'Aluminium', exchange: 'MCX/LME', currency: 'USD', mcx: true },
+  // MCX
+  { symbol: 'GC=F', name: 'Gold', exchange: 'MCX', currency: 'USD', mcx: true },
+  { symbol: 'SI=F', name: 'Silver', exchange: 'MCX', currency: 'USD', mcx: true },
+
+  // COMEX / NYMEX
+  { symbol: 'GC=F', name: 'Gold', exchange: 'COMEX', currency: 'USD', mcx: false },
+  { symbol: 'SI=F', name: 'Silver', exchange: 'COMEX', currency: 'USD', mcx: false },
+  { symbol: 'CL=F', name: 'Crude Oil', exchange: 'NYMEX', currency: 'USD', mcx: false },
+
+  // Other MCX
+  { symbol: 'HG=F', name: 'Copper', exchange: 'MCX', currency: 'USD', mcx: true },
+  { symbol: 'NG=F', name: 'Natural Gas', exchange: 'MCX', currency: 'USD', mcx: true },
+  { symbol: 'ZN=F', name: 'Zinc', exchange: 'MCX', currency: 'USD', mcx: true },
+  { symbol: 'PB=F', name: 'Lead', exchange: 'MCX', currency: 'USD', mcx: true },
+  { symbol: 'ALI=F', name: 'Aluminium', exchange: 'MCX', currency: 'USD', mcx: true },
+
   // US/Global
   { symbol: 'BZ=F', name: 'Brent Crude', exchange: 'ICE', currency: 'USD', mcx: false },
-  { symbol: 'GC=F', name: 'Gold (COMEX)', exchange: 'COMEX', currency: 'USD', mcx: false },
-  { symbol: 'SI=F', name: 'Silver (COMEX)', exchange: 'COMEX', currency: 'USD', mcx: false },
 ];
 
 app.get('/api/commodities/prices', async (req, res) => {

@@ -376,6 +376,135 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === '/' && document.activeElement !== input) { e.preventDefault(); input?.focus(); }
     });
 
+    // ─── Upcoming Events Drawer Logic ──────────────────────────────────────────
+    const eventsBtn = document.getElementById('floating-events-btn');
+    const eventsBadge = document.getElementById('floating-events-badge');
+    const eventsDrawer = document.getElementById('events-drawer');
+    const eventsOverlay = document.getElementById('events-drawer-overlay');
+    const eventsClose = document.getElementById('events-drawer-close');
+    const eventsBody = document.getElementById('events-drawer-body');
+
+    let eventsCacheData = null;
+    let eventsLastFetched = 0;
+
+    function openEventsDrawer() {
+        eventsDrawer.classList.add('active');
+        eventsOverlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+
+        // Fetch if no cache or older than 10 mins
+        if (watchlist.length > 0) {
+            const now = Date.now();
+            if (!eventsCacheData || now - eventsLastFetched > 10 * 60 * 1000) {
+                loadUpcomingEvents();
+            } else {
+                renderEventsDrawer(eventsCacheData);
+            }
+        } else {
+            eventsBody.innerHTML = '<div class="events-drawer__empty"><p>Your watchlist is empty.</p></div>';
+            eventsBadge.style.display = 'none';
+        }
+    }
+
+    function closeEventsDrawer() {
+        eventsDrawer.classList.remove('active');
+        eventsOverlay.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    async function loadUpcomingEvents() {
+        eventsBody.innerHTML = '<div class="drawer-loading"><div class="spinner"></div><span>Loading events…</span></div>';
+        try {
+            const res = await fetchBulkUpcomingEvents(watchlist);
+            eventsCacheData = res.events || [];
+            eventsLastFetched = Date.now();
+            renderEventsDrawer(eventsCacheData);
+        } catch (e) {
+            eventsBody.innerHTML = `<div class="events-drawer__empty" style="color:var(--red);"><p>Error: ${e.message}</p></div>`;
+        }
+    }
+
+    function renderEventsDrawer(events) {
+        if (!events || events.length === 0) {
+            eventsBody.innerHTML = '<div class="events-drawer__empty"><p>No upcoming events for your watchlist in the next 30 days.</p></div>';
+            eventsBadge.style.display = 'none';
+            return;
+        }
+
+        eventsBadge.textContent = events.length;
+        eventsBadge.style.display = 'block';
+
+        // Group by symbol
+        const grouped = {};
+        events.forEach(e => {
+            if (!grouped[e.symbol]) grouped[e.symbol] = { company: e.company, list: [] };
+            grouped[e.symbol].list.push(e);
+        });
+
+        let html = '';
+        for (const [sym, data] of Object.entries(grouped)) {
+            html += `
+                <div class="event-group">
+                    <div class="event-group__header">
+                        <span class="event-group__symbol">${sym}</span>
+                        <span class="event-group__company">${data.company}</span>
+                    </div>
+                    <div class="event-group__list">
+            `;
+            data.list.forEach(item => {
+                const typeClass = item.type === 'Dividend' ? 'type-dividend'
+                    : item.type === 'Stock Split' ? 'type-split'
+                        : item.type === 'Bonus Issue' ? 'type-bonus'
+                            : item.type === 'Board Meeting' ? 'type-meeting' : 'type-default';
+
+                // Parse date (e.g. "27-Mar-2026")
+                let day = '--', month = '---';
+                if (item.rawDate) {
+                    const parts = item.rawDate.split('-');
+                    if (parts.length >= 2) {
+                        day = parts[0];
+                        month = parts[1];
+                    }
+                }
+
+                html += `
+                        <div class="drawer-event-item">
+                            <div class="drawer-event-date">
+                                <span class="day">${day}</span>
+                                <span class="month">${month}</span>
+                            </div>
+                            <div class="drawer-event-content">
+                                <div class="drawer-event-type ${typeClass}">${item.event_type}</div>
+                                <div class="drawer-event-label">${item.label || item.event_type}</div>
+                            </div>
+                        </div>
+                `;
+            });
+            html += `</div></div>`;
+        }
+        eventsBody.innerHTML = html;
+    }
+
+    eventsBtn?.addEventListener('click', openEventsDrawer);
+    eventsOverlay?.addEventListener('click', closeEventsDrawer);
+    eventsClose?.addEventListener('click', closeEventsDrawer);
+
+    // Auto-fetch upcoming events in background to update badge
+    async function initEventsBadge() {
+        if (watchlist.length > 0) {
+            try {
+                const res = await fetchBulkUpcomingEvents(watchlist);
+                eventsCacheData = res.events || [];
+                eventsLastFetched = Date.now();
+                if (eventsCacheData.length > 0) {
+                    eventsBadge.textContent = eventsCacheData.length;
+                    eventsBadge.style.display = 'block';
+                }
+            } catch (e) { }
+        }
+    }
+    setTimeout(initEventsBadge, 3000); // 3 seconds after load
+
     // Auto-fetch on load
     if (watchlist.length > 0) setTimeout(fetchAllStocks, 600);
 });
